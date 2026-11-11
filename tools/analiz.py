@@ -11,13 +11,13 @@
 
 Читает только таблицы из input/analiz/ (xlsx, csv, txt; через read_table.py), пишет только в output/analiz/
 (история history.json и файлы Excel). Исключение одно: demo кладёт копию учебной выгрузки в input/analiz/,
-если такой копии там ещё нет, и чужие файлы не перезаписывает. В модель (только ask, только через llm.py
-с проверкой данных) уходят паспорт и вопрос. Запрос JSON описан в плане «Аналитика таблиц»: table, sheet,
+если такой копии там ещё нет, и чужие файлы не перезаписывает. В модель (только ask, через llm.py)
+уходят паспорт и вопрос. Запрос JSON описан в плане «Аналитика таблиц»: table, sheet,
 filters, group_by, measures, compare, join, sort, limit.
 
 Вывод для программ: JSON в stdout. Ошибка: одна строка по-русски в stderr и {"error": ...} в stdout.
-Коды выхода: 0 готово; 2 ошибка в запросе или в данных; 3 Claude для страницы недоступен; 4 данные не прошли
-проверку (персональные данные); 5 вопрос требует строк с текстом или данных о людях.
+Коды выхода: 0 готово; 2 ошибка в запросе или в данных; 3 Claude для страницы недоступен; 4 запрос не прошёл
+проверку llm.py (слишком большой объём); 5 вопрос требует читать текст строк (это делает Claude во вкладке Code).
 Только стандартная библиотека и openpyxl.
 """
 
@@ -41,8 +41,8 @@ if str(TOOLS) not in sys.path:
 import read_table as rt  # noqa: E402
 
 try:
-    import llm  # проверка данных и модель: tools/llm.py
-except Exception:  # нет файла или он не загрузился: проверка по простым образцам ниже, модель недоступна
+    import llm  # модель: tools/llm.py
+except Exception:  # нет файла или он не загрузился: модель недоступна
     llm = None
 
 MODEL = "sonnet"
@@ -61,18 +61,10 @@ AGGS = ("sum", "avg", "count", "count_distinct", "min", "max")
 PERIODS = {"day": "день", "week": "неделя", "month": "месяц", "quarter": "квартал", "year": "год"}
 NUM, DATE, TEXT, PERIOD = "число", "дата", "текст", "период"
 KIND = {NUM: "числовой столбец", DATE: "столбец дат", TEXT: "текстовый столбец", PERIOD: "столбец периодов"}
-HIDDEN = "значения скрыты"
 EMPTY_LABEL = "(пусто)"  # группа строк, где в столбце группировки ничего нет (или нет пары при соединении)
 DEMO_SOURCE = ("input", "case", "data", "prodazhi_1c.csv")
 DEMO_SPEC = ("templates", "analiz", "demo-zapros.json")
 ID_RE = re.compile(r"^q-[0-9A-Za-z-]{1,40}$")
-# Столбцы о людях и реквизитах: значения не показываются ни в паспорте, ни в выводе для разговора.
-PERSONAL_COL = re.compile(
-    r"фио|фамили|\bимя\b|отчеств|сотрудник|работник|клиент|покупател|контрагент|ответствен|исполнител|"
-    r"руководител|менеджер|кассир|оператор|водител|получател|заявител|автор|телефон|\bтел\b|e-?mail|почт|"
-    r"\bиин\b|\bбин\b|паспорт|адрес|iban|расч[её]тн|номер карт|\bfio\b|\bname\b|phone", re.I)
-
-
 class Stop(rt.UserError):
     """Понятная человеку ошибка: одна строка по-русски, код выхода (2 по умолчанию) и поля для JSON."""
 
@@ -80,38 +72,6 @@ class Stop(rt.UserError):
         super().__init__(message)
         self.code = code
         self.extra = extra
-
-
-# ---------- проверка данных (tools/llm.py) ----------
-
-_FALLBACK = [
-    ("ИИН или БИН", re.compile(r"(?<!\d)\d{12}(?!\d)")),
-    ("телефон", re.compile(r"(?:\+7|8)[\s\-(]{0,2}7\d{2}[\s\-)]{0,2}\d{3}[\s\-]?\d{2}[\s\-]?\d{2}")),
-    ("e-mail", re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")),
-    ("ФИО с инициалами", re.compile(r"[А-ЯЁ][а-яё]{2,}\s+[А-ЯЁ]\.\s?[А-ЯЁ]\.")),
-    ("ФИО", re.compile(r"[А-ЯЁ][а-яё]+(?:ов|ев|ин|ова|ева|ина|ский|ская)\s+[А-ЯЁ][а-яё]{2,}")),
-]
-
-
-def pd_findings(text):
-    """Находки проверки на персональные данные. Без llm.py: простые образцы (ИИН, телефон, почта, ФИО)."""
-    text = str(text)
-    if llm is not None and hasattr(llm, "check"):
-        try:
-            return list(llm.check(text))
-        except Exception as e:
-            return [f"проверка данных не сработала ({type(e).__name__})"]
-    return [name for name, rx in _FALLBACK if rx.search(text)]
-
-
-def personal_column(name):
-    return bool(PERSONAL_COL.search(str(name)))
-
-
-def values_visible(name, labels):
-    """Значения справочника можно показать (в паспорте, в подсказке, в разговоре): столбец не о людях
-    и проверка ни по одному значению ничего не нашла."""
-    return not personal_column(name) and not any(pd_findings(v) for v in labels)
 
 
 # ---------- числа и даты ----------
@@ -446,10 +406,7 @@ def col_passport(c):
     present = [v for v in c.vals if v is not None]
     if c.typ == NUM and present:
         lo, hi = min(present), max(present)
-        if values_visible(c.name, [fmt_ru(lo), fmt_ru(hi), str(clean_number(lo)), str(clean_number(hi))]):
-            d["min"], d["max"] = clean_number(lo), clean_number(hi)
-        else:
-            d["values"] = HIDDEN
+        d["min"], d["max"] = clean_number(lo), clean_number(hi)
     elif c.typ == DATE and present:
         d["first"], d["last"] = min(present).isoformat(), max(present).isoformat()
         if c.serial:
@@ -465,7 +422,7 @@ def col_passport(c):
         d["distinct"] = len(first) if len(first) <= MAX_VALUES else len(set(norm(v) for v in present))
         if len(first) <= MAX_VALUES and first:
             labels = sorted(first.values(), key=norm)
-            d["values"] = labels if values_visible(c.name, labels) else HIDDEN
+            d["values"] = labels
     return d
 
 
@@ -497,7 +454,7 @@ def passport(root, sub=None):
                 f["sheets"].append(s)
                 continue
             above = [" ".join(c for c in row)[:150] for row in res.get("above_header", [])[:3]]
-            if above and not any(pd_findings(a) for a in above):
+            if above:
                 s["title"] = above
             s["columns"] = [col_passport(t.column(i)) for i in range(len(t.columns))]
             out["total_rows"] += t.n
@@ -990,12 +947,6 @@ def execute(root, spec):
 
     total_rows = len(out_rows)
     rows_json = [[json_value(v, typ) for v, typ in zip(r, types)] for r in out_rows]
-    hidden = []
-    for gi, (c, _, name, typ) in enumerate(groups):
-        if typ in (TEXT, NUM):
-            labs = sorted({str(r[gi]) for r in rows_json if r[gi] is not None})
-            if not values_visible(c.name, labs):
-                hidden.append(name)
     limit = spec.get("limit")
     if limit is None or limit == "":
         limit = MAX_LIMIT
@@ -1030,7 +981,6 @@ def execute(root, spec):
         "totals": totals,
         "periods": {"A": labels_ab[0], "B": labels_ab[1]} if labels_ab else None,
         "notes": notes,
-        "hidden_in_chat": hidden,
     }
     result["summary"] = summarize(result, measures, single)
     result["rows"] = rows_json[:limit]
@@ -1068,10 +1018,10 @@ def empty_message(t, tests, described):
             wanted = as_list(value)
             if any(norm(w) not in have for w in wanted):
                 labels = sorted({v for v in c.vals if v is not None}, key=norm)
-                if len({norm(v) for v in labels}) <= MAX_VALUES and values_visible(c.name, labels):
+                if len({norm(v) for v in labels}) <= MAX_VALUES:
                     msg += f" В «{c.name}» есть значения: " + ", ".join(dict.fromkeys(labels)) + "."
                 else:
-                    msg += f" Значения «{c.name}» не показываю: их много или они похожи на персональные данные."
+                    msg += f" Значений «{c.name}» больше {MAX_VALUES}, не перечисляю."
         if c.typ in (NUM, DATE):
             present = [v for v in c.vals if v is not None]
             if present:
@@ -1086,11 +1036,7 @@ def summarize(r, measures, single):
     if not measures:
         return ""
     name = measures[0][2]
-    masked = bool(r["hidden_in_chat"])
-
     def lab(row):
-        if masked:
-            return "строка ответа " + str(rows.index(row) + 1)
         return " / ".join(fmt_cell(v) for v in row[:g])
 
     if r["periods"]:
@@ -1223,16 +1169,9 @@ def save(root, result, source, demo=False):
 
 
 def for_chat(entry):
-    """Ответ для stdout (разговор, модель): не больше 30 строк, значения о людях скрыты."""
+    """Ответ для stdout (разговор, модель): не больше 30 строк."""
     e = dict(entry)
     rows = e["rows"][:SHOWN]
-    hidden = set(e.get("hidden_in_chat") or [])
-    if hidden:
-        idx = [i for i, c in enumerate(e["columns"]) if c in hidden]
-        rows = [[("скрыто" if i in idx and v is not None else v) for i, v in enumerate(r)] for r in rows]
-        e["notes"] = e["notes"] + [
-            "Значения «" + "», «".join(sorted(hidden)) + "» здесь скрыты: похожи на персональные данные. "
-            "Полный ответ на странице «Аналитика таблиц»."]
     e["rows"] = rows
     e["rows_shown"] = len(rows)
     e["rows_in_history"] = len(entry["rows"])
@@ -1372,7 +1311,7 @@ PROMPT = """Ты помогаешь программе «Аналитика та
 - Названия столбцов и таблиц бери точно из паспорта. Нужного столбца нет: не подставляй похожий по смыслу без пометки в note.
 - «Последняя неделя», «прошлый месяц» и подобное отсчитывай от последней даты в данных (поле last в паспорте), если в вопросе нет своей даты. Неделя: с понедельника по воскресенье.
 - Если в справочнике есть значения вроде «Возврат», «Сторно», «Отмена», реши, нужен ли отбор для вопроса, и напиши об этом в note.
-- Если для ответа нужно читать смысл текста в строках (комментарии, жалобы, описания) или нужны итоги по конкретным людям (ФИО, сотрудники, клиенты), ответь {"need_rows": true, "why": "коротко почему"}.
+- Если для ответа нужно читать смысл текста в строках (комментарии, жалобы, описания), ответь {"need_rows": true, "why": "коротко почему"}. Итоги по людям (ФИО, сотрудники, клиенты) считай обычным запросом.
 - Если по этим таблицам ответить нельзя (нет нужных данных), ответь {"cannot": true, "why": "чего не хватает"}.
 - В текстах не используй длинное и среднее тире, только дефис."""
 
@@ -1428,8 +1367,9 @@ def ask(root, question):
         spec = parse_model_json(call_model(question, payload))
         if spec.get("need_rows"):
             why = no_dash(label(spec.get("why") or "нужно читать строки")).rstrip(". ")
-            raise Stop(f"Этот вопрос требует строк с текстом или данных о людях ({why}): обезличьте файл "
-                       "анонимайзером с воркшопа 2 и положите копию в input/analiz.", 5, need_rows=True, why=why)
+            raise Stop(f"Для этого вопроса нужно читать текст строк ({why}): задайте его Claude во вкладке Code: "
+                       f"«проанализируй таблицу: {question}».", 5, need_rows=True, why=why,
+                       phrase=f"проанализируй таблицу: {question}")
         if spec.get("cannot"):
             raise Stop("По этим таблицам ответить нельзя: "
                        + no_dash(label(spec.get("why") or "нет нужных данных")).rstrip(". ") + ".",

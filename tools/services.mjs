@@ -383,7 +383,7 @@ export function checkProject(root, dirArg, { cwd = process.cwd() } = {}) {
   if (lib && (lib.isSymbolicLink() || !lib.isDirectory())) problems.push('lib должна быть обычной папкой проекта (её заполняет кабинет)');
   const out = lstatOrNull(join(dir, OUTPUT_DIR));
   if (out && (out.isSymbolicLink() || !out.isDirectory())) problems.push('output должна быть обычной папкой проекта');
-  // Свои модули с именами модулей кабинета перекрыли бы lib/llm.py и его проверку данных.
+  // Свои модули с именами модулей кабинета перекрыли бы lib/llm.py и запись обращений к модели в журнал.
   try {
     for (const e of readdirSync(dir)) {
       const stem = e.split('.')[0];

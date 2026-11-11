@@ -8,7 +8,7 @@
 //
 // Что проверяется: среда (Node, git, Python, библиотеки), установка (init, скиллы), демо «Аналитики таблиц»
 // и «Светофора точек продаж», сервис-проект (new, add, run, list) и что из него уходит в git (данные и .env нет),
-// проверка данных перед моделью (tools/llm.py), страница: файлы, API процессов, сервисов, настроек и аналитики
+// проверка объёма перед моделью (tools/llm.py), страница: файлы, API процессов, сервисов, настроек и аналитики
 // (паспорт, история, загрузка и удаление файла), кнопки «Запустить», скачивание результата, защита токеном.
 // Коды выхода: 0 всё работает (предупреждения не мешают), 1 есть ошибки.
 import { spawn, spawnSync } from 'node:child_process';
@@ -402,15 +402,15 @@ export async function selftest({ keep = false } = {}) {
       }
     }
 
-    // Проверка данных перед моделью: персональные данные не пропускаются.
-    const bad = join(work, 'pd.txt');
-    writeFileSync(bad, 'Тестов Тест Тестович, ИИН 900101300123, +7 701 123 45 67, test@example.com\n');
+    // Проверка перед моделью: данные как есть проходят (правила компании это разрешают), слишком большой объём нет.
+    const big = join(work, 'big.txt');
+    writeFileSync(big, 'x'.repeat(60001));
     const good = join(work, 'clean.txt');
-    writeFileSync(good, 'Столбцы: Точка (текст), Сумма (число). Итог: 18 847 700 тг.\n');
-    const cb = run(py, [join(cab, 'tools', 'llm.py'), 'check', bad], { cwd: cab, env, timeout: 60000 });
+    writeFileSync(good, 'Тестов Тест Тестович, ИИН 900101300123, +7 701 123 45 67. Точка Керуен, сумма 18 847 700 тг.\n');
+    const cb = run(py, [join(cab, 'tools', 'llm.py'), 'check', big], { cwd: cab, env, timeout: 60000 });
     const cg = run(py, [join(cab, 'tools', 'llm.py'), 'check', good], { cwd: cab, env, timeout: 60000 });
-    if (cb.code === 1 && cg.code === 0) ok('Проверка перед моделью: персональные данные не пропускает, описание пропускает');
-    else fail('Проверка перед моделью работает не так', `с ПД: код ${cb.code}, без ПД: код ${cg.code}. ${lastLine(cb.out)}`);
+    if (cb.code === 1 && cg.code === 0) ok('Проверка перед моделью: данные как есть пропускает, слишком большой объём нет');
+    else fail('Проверка перед моделью работает не так', `большой объём: код ${cb.code}, данные: код ${cg.code}. ${lastLine(cg.out)}`);
 
     page = await startPage(cab, env);
     if (!page.url) fail('Страница не запустилась', lastLine(page.text));

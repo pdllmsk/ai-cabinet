@@ -286,12 +286,15 @@ test('нет claude (код 3): подсказка про вкладку Code с
   assert.match(R.renderAskProblem(503, { code: 'ENOCLAUDE' }, 'вопрос'), /value="проанализируй таблицу: вопрос"/);
 });
 
-test('проверка ПД (код 4): причина от движка и подсказка обезличить; прочие ошибки текстом', () => {
-  const pd = R.renderAskProblem(422, { code: 'EPERSONAL', error: 'в модель ушли бы персональные данные: ИИН' }, 'q');
-  assert.match(pd, /Вопрос не отправлен\.<\/b> в модель ушли бы персональные данные: ИИН/);
-  assert.match(pd, /анонимайзером с воркшопа 2/);
+test('проверка перед моделью (код 4): причина от движка; строки (код 5): фраза для Code; прочие ошибки текстом', () => {
+  const pd = R.renderAskProblem(422, { code: 'EPERSONAL', error: 'слишком большой объём' }, 'q');
+  assert.match(pd, /Вопрос не отправлен\.<\/b> слишком большой объём/);
+  assert.doesNotMatch(pd, /обезлич/);
   assert.match(R.renderAskProblem(422, { code: 'EENGINE', error: 'Нет столбца <x>' }, 'q'), /<div class="notice"><p>Нет столбца &lt;x&gt;<\/p>/);
-  assert.match(R.renderAskProblem(422, { code: 'EROWS', error: 'Этот вопрос требует строк с текстом' }, 'q'), /<div class="notice"><p>Этот вопрос требует строк/);
+  const rows = R.renderAskProblem(422, { code: 'EROWS', error: 'Для этого вопроса нужно читать текст строк', phrase: 'проанализируй таблицу: q' }, 'q');
+  assert.match(rows, /<div class="notice"><p>Для этого вопроса нужно читать текст строк/);
+  assert.match(rows, /value="проанализируй таблицу: q"/);
+  assert.doesNotMatch(rows, /обезлич/);
   assert.match(R.renderAskProblem(500, { error: 'Python не найден' }, 'q'), /<p class="run-error">Python не найден<\/p>/);
   assert.match(R.renderAskProblem(504, { code: 'ETIMEOUT', error: 'долго', phrase: 'проанализируй таблицу: q' }, 'q'), /data-copy="phrase"/);
   assert.match(R.renderAskProblem(404, {}, 'q'), /запущена до обновления/);

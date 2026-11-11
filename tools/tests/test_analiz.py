@@ -230,7 +230,7 @@ class Passport(unittest.TestCase):
         self.c = Cab()
         self.addCleanup(self.c.close)
 
-    def test_types_ranges_values_and_hidden(self):
+    def test_types_ranges_values(self):
         lines = ["Дата;Отдел;Сотрудник;Комментарий;Сумма;Код"]
         for i in range(40):
             day = f"{i % 28 + 1:02d}.09.2026" if i % 2 else f"2026-09-{i % 28 + 1:02d}"
@@ -250,13 +250,12 @@ class Passport(unittest.TestCase):
         self.assertEqual(cols["Сумма"]["type"], "число")
         self.assertEqual((cols["Сумма"]["min"], cols["Сумма"]["max"]), (1000000.5, 1039039.5))
         self.assertEqual(cols["Отдел"]["values"], ["Бухгалтерия", "Закупки", "Продажи"])
-        self.assertEqual(cols["Сотрудник"]["values"], "значения скрыты")  # столбец о людях
-        self.assertEqual(cols["Комментарий"]["values"], "значения скрыты")  # проверка нашла ФИО
+        # Столбцы о людях не скрываются: правила компании разрешают отправлять такие данные.
+        self.assertEqual(cols["Сотрудник"]["values"], ["Сотрудник 0", "Сотрудник 1", "Сотрудник 2", "Сотрудник 3"])
+        self.assertEqual(cols["Комментарий"]["values"], ["без замечаний", "звонил Тестов Тест Тестович"])
         self.assertEqual(cols["Код"]["distinct"], 40)
         self.assertNotIn("values", cols["Код"])  # больше 30 разных: значений нет
-        text = json.dumps(p, ensure_ascii=False)
-        for leak in ("КОД-0007", "Иванов", "Сотрудник 1", "без замечаний"):
-            self.assertNotIn(leak, text)
+        self.assertNotIn("КОД-0007", json.dumps(p, ensure_ascii=False))
 
     @unittest.skipUnless(HAVE_OPENPYXL, "нет openpyxl")
     def test_xlsx_sheets_title_and_excel_dates(self):
@@ -312,7 +311,7 @@ class Passport(unittest.TestCase):
 
 @unittest.skipUnless((TOOLS / "llm.py").exists(), "нет tools/llm.py")
 class PassportRealCheck(unittest.TestCase):
-    """С настоящей проверкой tools/llm.py: ФИО в справочнике скрыты, паспорт учебной выгрузки и инструкция проходят."""
+    """С настоящей проверкой tools/llm.py: ФИО в справочнике видны, паспорт и инструкция проходят проверку."""
 
     def setUp(self):
         self.c = Cab(fake_llm=False)
@@ -327,14 +326,14 @@ class PassportRealCheck(unittest.TestCase):
         p = json.loads(out)
         files = {f["file"]: f for f in p["files"]}
         cols = {c["name"]: c for c in files["люди.csv"]["sheets"][0]["columns"]}
-        self.assertEqual(cols["Ответственный за смену"]["values"], "значения скрыты")
+        self.assertEqual(cols["Ответственный за смену"]["values"], ["Выдумкин Вымысел", "Примерова Проба Примеровна"])
         self.assertEqual(cols["Подразделение"]["values"], ["Точка-01", "Точка-02"])
         import importlib
         sys.path.insert(0, str(self.c.root / "tools"))
         try:
             llm = importlib.import_module("llm")
             mod = load_module()
-            payload = "Паспорт данных: " + mod.passport_for_model(p) + "\n\nВопрос человека: продажи по Точка"
+            payload = "Паспорт данных: " + mod.passport_for_model(p) + "\n\nВопрос человека: продажи по Выдумкин Вымысел"
             self.assertEqual(llm.check(mod.PROMPT + "\n" + payload), [])
         finally:
             sys.path.remove(str(self.c.root / "tools"))
@@ -574,13 +573,12 @@ class HistoryAndExcel(unittest.TestCase):
         self.assertEqual(code, 0, err)
         self.assertIn("Дата | Точка | Выручка", out)
 
-    def test_people_hidden_in_chat_full_in_history(self):
+    def test_people_shown_in_chat_and_history(self):
         self.c.put("смены.csv", "Сотрудник;Сумма\nСмена Альфа;10\nСмена Бета;20\nСмена Альфа;5\n")
         r = self.c.ok("run", self.c.spec_file({"table": "смены.csv", "group_by": ["Сотрудник"],
                                                "measures": [{"col": "Сумма", "agg": "sum"}]}))
-        self.assertEqual([row[0] for row in r["rows"]], ["скрыто", "скрыто"])
-        self.assertTrue(any("скрыты" in n for n in r["notes"]))
-        self.assertNotIn("Альфа", r["summary"])
+        self.assertEqual(sorted(row[0] for row in r["rows"]), ["Смена Альфа", "Смена Бета"])
+        self.assertFalse(any("скрыт" in n for n in r["notes"]))
         h = self.c.history()[0]
         self.assertEqual(sorted(row[0] for row in h["rows"]), ["Смена Альфа", "Смена Бета"])
 
@@ -658,7 +656,7 @@ class Ask(unittest.TestCase):
     def test_need_rows(self):
         line, j = self.c.fail(5, "ask", "О чём жалуются клиенты?",
                               answers=['{"need_rows": true, "why": "нужно читать тексты жалоб"}'])
-        self.assertIn("обезличьте файл анонимайзером с воркшопа 2", line)
+        self.assertIn("задайте его Claude во вкладке Code: «проанализируй таблицу: О чём жалуются клиенты?»", line)
         self.assertTrue(j["need_rows"])
         self.assertFalse((self.c.out / "history.json").exists())
 

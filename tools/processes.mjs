@@ -823,8 +823,7 @@ const PROGRAM_EXT = /\.py$/i;
 
 // Встроенная команда скилла: восклицательный знак и сразу, вплотную, команда в обратных кавычках или блок
 // кода, открытый тремя обратными кавычками с восклицательным знаком. Claude Code выполняет её при запуске
-// скилла без вопроса. Правило то же, что у сторожа кабинета при записи скилла (SKILL_CMD в guard.mjs):
-// «Готово! `файл`» через пробел не команда.
+// скилла без вопроса. «Готово! `файл`» через пробел не команда.
 const SKILL_CMD = /!`[^`\n]+`|```[ \t]*!/;
 
 export function skillCommandLines(text) {
@@ -1082,7 +1081,7 @@ export const COVERAGE = 'строк в эталоне';
 const MANUAL_WARN_SHARE = 0.2;
 // Напоминание Claude перед правкой программы или словаря после сверки: одной строкой, один раз за вывод.
 export const FIX_NOTE =
-  'Для Claude: перед правкой программы или словаря напишите человеку текстом ответа: «Поправляю программу, нажмите «Allow» (разрешить).»';
+  'Для Claude: перед правкой программы или словаря напишите человеку текстом ответа: «Поправляю программу. Если Claude попросит разрешение, нажмите «Allow» (разрешить).»';
 
 // Сравнение эталона и раздела sverka программы: { lines, code, differences, manual }.
 // Строка, которую программа отправила в «разобрать вручную», расхождением не считается: она в списке
@@ -1278,7 +1277,7 @@ export const ALLOWED_IMPORTS = new Set([
   // интернет: запросы к сайтам и разбор ответа
   'urllib', 'urllib3', 'http', 'requests', 'httpx', 'socket', 'ssl', 'html', 'xml', 'email', 'base64', 'hashlib',
   'gzip', 'uuid', 'random', 'smtplib', 'ftplib',
-  // модель внутри сервиса: только через tools/llm.py, он проверяет данные перед отправкой
+  // модель внутри сервиса: только через tools/llm.py, он пишет обращения в журнал кабинета
   'llm',
   // серверная часть своей страницы сервиса: помощник из lib проекта (tools/service_api.py)
   'service_api',
@@ -1291,7 +1290,7 @@ const NOT_ALLOWED_IMPORT = 'библиотека не из списка (ста�
 const PROGRAM_RULES = [
   [/\b(subprocess|ctypes|importlib|webbrowser)\b/, 'запуск программ'],
   [/api\.anthropic\.com|api\.openai\.com|generativelanguage\.googleapis|api\.mistral\.ai|api\.deepseek|gigachat|llm\.api\.cloud\.yandex|api\.groq|openrouter\.ai|\b(anthropic|openai)\b/i,
-    'модель только через tools/llm.py: он проверяет данные перед отправкой'],
+    'модель только через tools/llm.py: он пишет обращения в журнал кабинета'],
   [/\bhttp\.server\b|^\s*from\s+http\s+import\s+server\b/, 'своя страница или сервер в программе процесса'],
   [/\bos\.(system|popen|exec\w*|spawn\w*|posix_spawn\w*|startfile|fork\w*)\b/, 'запуск программ'],
   [/(?<![\w.])(eval|exec|compile|__import__)\s*\(/, 'выполнение текста как программы'],
@@ -1404,8 +1403,7 @@ export function compareProcess(root, slug) {
 // Скиллы курса: их кабинет привозит сам, «своими» они не считаются.
 export const COURSE_SKILLS = ['about-me', 'setup-check', 'update-cabinet', 'add-process', 'run-process', 'demo-process', 'find-process', 'ask-table'];
 
-// Список своих скиллов из .claude/skills для операции «добавить процесс». Командой курса, без окна:
-// ls или find с папкой .claude спрашивают окно разрешения, а поиска файлов без команды может не быть.
+// Список своих скиллов из .claude/skills для операции «добавить процесс»: командой курса, без окна, с описаниями.
 export function listSkills(root) {
   const dir = join(root, '.claude', 'skills');
   let names = [];

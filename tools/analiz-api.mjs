@@ -1,8 +1,8 @@
 // API сервиса «Аналитика таблиц» под /<token>/api/analiz/ (страница site/analiz.html). Без зависимостей.
 // Считает движок tools/analiz.py (подкоманды passport, ask, excel): он запускается своим Python кабинета
 // (абсолютный путь вне кабинета, как у процессов), из корня кабинета, без оболочки, аргументы отдельными строками.
-// Ответ движка: JSON в stdout. Коды выхода: 0 готово, 3 на компьютере нет claude, 4 данные не прошли проверку
-// на персональные данные, 5 вопрос требует строк с текстом или данных о людях, другие (обычно 2): ошибка,
+// Ответ движка: JSON в stdout. Коды выхода: 0 готово, 3 на компьютере нет claude, 4 запрос не прошёл проверку
+// llm.py (слишком большой объём), 5 вопрос требует читать текст строк (это делает Claude во вкладке Code), другие (обычно 2): ошибка,
 // её текст в JSON (error) или в последней строке stderr.
 //
 //   GET  api/analiz/passport          паспорт данных из input/analiz/ (файлы, листы, столбцы, число строк)
@@ -228,7 +228,7 @@ export function engineMessage(json, stderr) {
         .map((f) => (typeof f === 'string' ? f : isObj(f) ? f.kind ?? f.type ?? f.what ?? f.name : null))
         .filter((x) => typeof x === 'string' && x)
         .join(', ');
-      if (what) return clip(`в модель ушли бы персональные данные: ${what}`);
+      if (what) return clip(`не отправлено в модель: ${what}`);
     }
   }
   const lines = String(stderr ?? '')
@@ -394,9 +394,8 @@ const NO_ENGINE = 'Сервис «Аналитика таблиц» в этом 
 const BUSY = 'Предыдущий вопрос ещё считается. Дождитесь ответа и спросите снова.';
 const NO_CLAUDE =
   'На этом компьютере не найден Claude Code командной строки, поэтому страница не может спросить модель. Задайте вопрос Claude во вкладке Code.';
-const PERSONAL = 'Вопрос не отправлен: в описании данных нашлись персональные данные. В модель ничего не ушло.';
-const NEED_ROWS =
-  'Этот вопрос требует строк с текстом или данных о людях: обезличьте файл анонимайзером с воркшопа 2 и положите копию в input/analiz.';
+const PERSONAL = 'Вопрос не отправлен в модель: слишком большой объём описания данных.';
+const NEED_ROWS = 'Для этого вопроса нужно читать текст строк: задайте его Claude во вкладке Code.';
 
 const BAD_TYPE = 'Подходят файлы Excel (.xlsx, .xlsm) и CSV (.csv, .txt). Старый файл Excel (.xls) откройте в Excel и сохраните как .xlsx.';
 const TOO_BIG = `Файл больше ${UPLOAD_MAX / 1024 / 1024} МБ. Оставьте в нём нужные листы и строки или положите его в папку с данными сами.`;
@@ -466,7 +465,7 @@ export function createAnalizApi(root, { python, openFolder = openInExplorer, ask
     }
     if (r.code === 3) return sendJson(res, 503, { code: 'ENOCLAUDE', error: NO_CLAUDE, detail: r.message, phrase });
     if (r.code === 4) return sendJson(res, 422, { code: 'EPERSONAL', error: r.message || PERSONAL });
-    if (r.code === 5) return sendJson(res, 422, { code: 'EROWS', error: r.message || NEED_ROWS });
+    if (r.code === 5) return sendJson(res, 422, { code: 'EROWS', error: r.message || NEED_ROWS, phrase });
     if (!r.ok) return sendJson(res, 422, { code: 'EENGINE', error: r.message || 'Не получилось ответить на вопрос.' });
     if (!isObj(r.json)) return sendJson(res, 500, { code: 'EENGINE', error: 'Программа сервиса ответила не так, как ожидалось. Покажите это тренеру.' });
     return sendJson(res, 200, { ok: true, answer: r.json });

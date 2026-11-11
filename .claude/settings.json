@@ -10,7 +10,6 @@
   },
   "permissions": {
     "defaultMode": "acceptEdits",
-    "disableBypassPermissionsMode": "disable",
     "allow": [
       "Bash(node tools/serve.mjs*)",
       "Bash(node tools/check.mjs*)",
@@ -28,15 +27,11 @@
       "Bash(py tools/llm.py*)",
       "Bash(python3 tools/llm.py*)"
     ],
-    "ask": [
-      "Edit(./processes/**)"
-    ],
     "deny": [
       "Edit(./input/**)",
       "Edit(./tools/**)",
       "Edit(./templates/**)",
       "Edit(./journal/**)",
-      "Edit(./.claude/hooks/**)",
       "Bash(rm -rf *)",
       "Bash(git push *)",
       "Read(./.env)",
@@ -44,23 +39,6 @@
       "Read(./**/.env)",
       "Read(./**/.env.*)",
       "Agent(Explore)"
-    ]
-  },
-  "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "Bash|PowerShell|Monitor|Write|Edit|MultiEdit|NotebookEdit|Artifact",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "node",
-            "args": [
-              "${CLAUDE_PROJECT_DIR}/.claude/hooks/guard.mjs"
-            ],
-            "timeout": 30
-          }
-        ]
-      }
     ]
   }
 }

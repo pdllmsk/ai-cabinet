@@ -217,7 +217,7 @@ function plural(n, one, few, many) {
 // Служебные файлы систем и программ: не рабочие файлы человека (.gitkeep, .DS_Store, блокировки Excel).
 const isJunk = (name) => name.startsWith('.') || name.startsWith('~$') || /^(desktop\.ini|thumbs\.db)$/i.test(name);
 
-// Настройки кабинета (сторож, разрешения, модель) Claude Code берёт из папки, где открыт разговор, и только
+// Настройки кабинета (разрешения, модель) Claude Code берёт из папки, где открыт разговор, и только
 // при его начале. Разговор, где кабинет поставили по ссылке, открыт в другой папке и работает без них.
 // Метку AI_CABINET ставит .claude/settings.json; проверяем её, только когда проверку запустил Claude.
 export function checkSession(env) {

@@ -9,7 +9,6 @@ import { fileURLToPath } from 'node:url';
 import { deflateRawSync } from 'node:zlib';
 import { copyDir } from './copy-dir.mjs';
 import { compareWithEtalon, programProblems, skillCommandLines, zipEntries } from '../processes.mjs';
-import { hasSkillCommand } from '../../.claude/hooks/guard.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 let base, cab;
@@ -61,7 +60,7 @@ const BANG = '!';
 const TICK = '`';
 const CMD_LINE = `Сегодня: ${BANG}${TICK}date${TICK}`;
 const BLOCK_LINE = `${TICK.repeat(3)}${BANG}`;
-const FIX_NOTE = 'Для Claude: перед правкой программы или словаря напишите человеку текстом ответа: «Поправляю программу, нажмите «Allow» (разрешить).»';
+const FIX_NOTE = 'Для Claude: перед правкой программы или словаря напишите человеку текстом ответа: «Поправляю программу. Если Claude попросит разрешение, нажмите «Allow» (разрешить).»';
 
 const SKILL = `---
 name: razbor-obrashcheniy
@@ -125,19 +124,19 @@ test('read: встроенные команды скилла показаны с
   assert.deepEqual(skillCommandLines('Важно! Не трогайте файл.\nКоманда `ls` без восклицательного знака.'), []);
 });
 
-test('read и сторож узнают встроенную команду одинаково: «Готово! `файл`» через пробел не команда', () => {
-  const texts = [
-    CMD_LINE,
-    `${BLOCK_LINE}\nls\n${TICK.repeat(3)}`,
-    `${TICK.repeat(3)} \t${BANG}`,
-    `Готово${BANG} ${TICK}output/a.xlsx${TICK} сохранён`,
-    `Готово${BANG}\t${TICK}файл${TICK}`,
-    `${BANG}${TICK}${TICK}`,
-    'Важно! Не трогайте файл.',
-    'Команда `ls` без восклицательного знака.',
-    `строка 1\nстрока 2: ${BANG}${TICK}whoami${TICK}`,
+test('read узнаёт встроенную команду: «Готово! `файл`» через пробел не команда', () => {
+  const cases = [
+    [CMD_LINE, true],
+    [`${BLOCK_LINE}\nls\n${TICK.repeat(3)}`, true],
+    [`${TICK.repeat(3)} \t${BANG}`, true],
+    [`Готово${BANG} ${TICK}output/a.xlsx${TICK} сохранён`, false],
+    [`Готово${BANG}\t${TICK}файл${TICK}`, false],
+    [`${BANG}${TICK}${TICK}`, false],
+    ['Важно! Не трогайте файл.', false],
+    ['Команда `ls` без восклицательного знака.', false],
+    [`строка 1\nстрока 2: ${BANG}${TICK}whoami${TICK}`, true],
   ];
-  const differ = texts.filter((text) => (skillCommandLines(text).length > 0) !== hasSkillCommand(text));
+  const differ = cases.filter(([text, cmd]) => (skillCommandLines(text).length > 0) !== cmd);
   assert.deepEqual(differ, []);
   assert.deepEqual(skillCommandLines(`Готово${BANG} ${TICK}output/a.xlsx${TICK} сохранён`), []);
 });

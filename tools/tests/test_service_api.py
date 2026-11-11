@@ -159,12 +159,12 @@ class LlmJournalTest(unittest.TestCase):
         os.environ["CABINET_JOURNAL"] = str(journal)
         os.environ["CABINET_SERVICE"] = "svodka"
         with self.assertRaises(self.llm.LLMBlocked):
-            self.llm.ask("Сводка", "Иванов Иван Петрович, +7 701 123 45 67")
+            self.llm.ask("Сводка", "Иванов Иван Петрович, +7 701 123 45 67 " + "x" * 60000)
         lines = [json.loads(l) for l in journal.read_text(encoding="utf-8").splitlines()]
         self.assertEqual(len(lines), 1)
         line = lines[0]
         self.assertEqual((line["event"], line["service"], line["ok"]), ("model", "svodka", False))
-        self.assertIn("телефон: 1", line["reason"])
+        self.assertIn("слишком большой объём", line["reason"])
         text = journal.read_text(encoding="utf-8")
         self.assertNotIn("Иванов", text)
         self.assertNotIn("701", text)

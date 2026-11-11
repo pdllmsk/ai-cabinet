@@ -68,7 +68,7 @@ def big(data, file):
 
 def model(data, file):
     try:
-        llm.ask("Сводка", "Иванов Иван Петрович, +7 701 123 45 67")
+        llm.ask("Сводка", "Иванов Иван Петрович, +7 701 123 45 67 " + "x" * 60000)
     except llm.LLMBlocked:
         return {"blocked": True}
     return {"blocked": False}
@@ -251,7 +251,7 @@ test('загрузка, список и удаление файлов своим
   assert.ok(!JSON.stringify(lines).includes('Точка-01'), 'содержимое файлов в журнал не попадает');
 });
 
-test('обращение к модели с персональными данными: заблокировано, в журнале строка model без самих данных', async () => {
+test('обращение к модели со слишком большим объёмом: не отправлено, в журнале строка model без самих данных', async () => {
   const r = await call('stranitsa', 'model');
   assert.equal(r.status, 200);
   assert.deepEqual(r.json, { blocked: true });
@@ -259,7 +259,7 @@ test('обращение к модели с персональными данн�
   assert.equal(m.length, 1);
   assert.equal(m[0].service, 'stranitsa');
   assert.equal(m[0].ok, false);
-  assert.match(m[0].reason, /телефон: 1/);
+  assert.match(m[0].reason, /слишком большой объём/);
   assert.ok(!JSON.stringify(m).includes('Иванов') && !JSON.stringify(m).includes('701'));
 });
 

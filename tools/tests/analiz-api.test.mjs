@@ -20,7 +20,7 @@ const READ = { 'X-Cabinet': '1' };
 const WRITE = { 'X-Cabinet': '1', 'Content-Type': 'application/json' };
 
 // Подменённый движок: подкоманды passport, ask, excel по контракту. Вопрос определяет исход:
-// «нет claude...» код 3, «пд...» код 4, «строки...» код 5, «ошибка...» трейсбек и код 1, «долго...» ждёт 30 с,
+// «нет claude...» код 3, «пд...» (большой объём) код 4, «строки...» код 5, «ошибка...» трейсбек и код 1, «долго...» ждёт 30 с,
 // «тихо...» пустой вывод. История как у настоящего движка: новые в начале списка, время в поле created.
 const FAKE_ENGINE = String.raw`import json, os, sys, time
 args = sys.argv[1:]
@@ -45,9 +45,9 @@ if cmd == "ask":
     if q.startswith("нет claude"):
         say({"error": "claude не найден на этом компьютере"}, 3)
     if q.startswith("пд"):
-        say({"error": "в модель ушли бы персональные данные: ИИН в столбце «Клиент»"}, 4)
+        say({"error": "Вопрос не отправлен в модель: слишком большой объём: 60001 знаков (больше 60000)"}, 4)
     if q.startswith("строки"):
-        say({"error": "Этот вопрос требует строк с текстом или данных о людях (нужно читать жалобы): обезличьте файл анонимайзером с воркшопа 2 и положите копию в input/analiz.", "code": 5, "need_rows": True}, 5)
+        say({"error": "Для этого вопроса нужно читать текст строк (нужно читать жалобы): задайте его Claude во вкладке Code: «проанализируй таблицу: строки: о чём жалуются».", "code": 5, "need_rows": True}, 5)
     if q.startswith("ошибка"):
         sys.stderr.write('Traceback (most recent call last):\n  File "analiz.py", line 1\n    x\nValueError: Нет столбца «Сумма»\n')
         sys.exit(1)
@@ -227,18 +227,19 @@ test('ask: код 3 (нет claude) → 503 ENOCLAUDE с фразой для в�
   assert.match(r.json.error, /вкладке Code/);
 });
 
-test('ask: код 4 (проверка на персональные данные) → 422 EPERSONAL с причиной от движка', async () => {
+test('ask: код 4 (не прошло проверку llm.py) → 422 EPERSONAL с причиной от движка', async () => {
   const r = await ask('пд: выручка по клиентам');
   assert.equal(r.status, 422);
   assert.equal(r.json.code, 'EPERSONAL');
-  assert.equal(r.json.error, 'в модель ушли бы персональные данные: ИИН в столбце «Клиент»');
+  assert.equal(r.json.error, 'Вопрос не отправлен в модель: слишком большой объём: 60001 знаков (больше 60000)');
 });
 
-test('ask: код 5 (нужны строки с текстом или данные о людях) → 422 EROWS с подсказкой обезличить', async () => {
+test('ask: код 5 (нужно читать текст строк) → 422 EROWS с фразой для вкладки Code', async () => {
   const r = await ask('строки: о чём жалуются');
   assert.equal(r.status, 422);
   assert.equal(r.json.code, 'EROWS');
-  assert.match(r.json.error, /анонимайзером с воркшопа 2/);
+  assert.match(r.json.error, /вкладке Code/);
+  assert.equal(r.json.phrase, 'проанализируй таблицу: строки: о чём жалуются');
 });
 
 test('ask: ошибка движка → понятная строка без трейсбека; пустой вывод → 500', async () => {
@@ -402,7 +403,7 @@ test('parseEngineJson: весь вывод, последняя строка JSON
 
 test('engineMessage: поле JSON, находки проверки, последняя строка stderr без трейсбека', () => {
   assert.equal(engineMessage({ error: 'Нет столбца' }, 'x'), 'Нет столбца');
-  assert.equal(engineMessage({ findings: ['ИИН', { kind: 'телефон' }] }, ''), 'в модель ушли бы персональные данные: ИИН, телефон');
+  assert.equal(engineMessage({ findings: ['ИИН', { kind: 'телефон' }] }, ''), 'не отправлено в модель: ИИН, телефон');
   assert.equal(engineMessage(null, 'Traceback (most recent call last):\n  File "a.py"\nKeyError: «Сумма»\n'), 'KeyError: «Сумма»');
   assert.equal(engineMessage(null, ''), null);
   assert.ok(engineMessage({ error: 'я'.repeat(5000) }, '').length <= 600);

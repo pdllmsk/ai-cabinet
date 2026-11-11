@@ -8,7 +8,6 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { copyDir } from './copy-dir.mjs';
-import { classify } from '../../.claude/hooks/guard.mjs';
 import {
   addService,
   checkProject,
@@ -449,12 +448,7 @@ test('настоящий шаблон templates/service-project (если уже
   assert.equal(chk.status, 0, chk.stdout + chk.stderr);
 });
 
-test('кабинет разрешает node tools/services.mjs: settings.json и сторож', () => {
+test('кабинет разрешает node tools/services.mjs в settings.json', () => {
   const s = JSON.parse(readFileSync(join(ROOT, '.claude', 'settings.json'), 'utf8'));
   assert.ok(s.permissions.allow.includes('Bash(node tools/services.mjs*)'));
-  const ctx = { tool: 'Bash', cwds: [ROOT], roots: [ROOT], mode: 'acceptEdits' };
-  for (const cmd of ['node tools/services.mjs list', 'node tools/services.mjs run svodka-prodazh', 'node tools/services.mjs add "C:\\Users\\Айгуль Н\\Documents\\Сервисы\\svodka"']) {
-    assert.equal(classify(cmd, ctx), null, cmd);
-  }
-  assert.notEqual(classify('node tools/services.mjs list; echo x > processes/x/run.py', ctx), null);
 });

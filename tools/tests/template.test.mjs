@@ -26,7 +26,7 @@ const PARTICIPANT = (f) =>
   f === 'START.md' ||
   f === 'start-cabinet.cmd' ||
   f === 'start-cabinet.command' ||
-  ['.claude/skills/', '.claude/hooks/', 'templates/', 'me/', 'site/'].some((p) => f.startsWith(p));
+  ['.claude/skills/', 'templates/', 'me/', 'site/'].some((p) => f.startsWith(p));
 
 // Учебный кейс: тексты курса, стилевые правила участника на него не распространяются.
 const CASE_DIR = 'input/case/';
@@ -116,23 +116,23 @@ test('скиллы: name совпадает с папкой, description ест�
   }
 });
 
-test('settings: sonnet, без обхода, PYTHONUTF8, input защищён, без автопамяти', () => {
+test('settings: sonnet, режим выбирает человек, PYTHONUTF8, input защищён, без автопамяти', () => {
   const p = '.claude/settings.json';
   assert.ok(files.includes(p), 'нет .claude/settings.json');
   const s = JSON.parse(read(p));
   assert.equal(s.model, 'sonnet');
-  assert.notEqual(s.permissions.defaultMode, 'bypassPermissions');
-  assert.equal(s.permissions.disableBypassPermissionsMode, 'disable');
+  // Начальный режим автоприём правок, дальше режим (и обход разрешений) человек выбирает сам в интерфейсе Claude.
+  assert.equal(s.permissions.defaultMode, 'acceptEdits');
+  assert.equal(s.permissions.disableBypassPermissionsMode, undefined, 'обход разрешений не закрыт');
   assert.equal(s.env.PYTHONUTF8, '1');
   assert.ok(s.permissions.deny.includes('Edit(./input/**)'));
   // Инструменты курса запускаются без вопроса, поэтому править их Claude не может.
   assert.ok(s.permissions.deny.includes('Edit(./tools/**)'), 'нужен запрет Edit(./tools/**)');
   // «Запомни» пишется только в мои правила: автопамять проекта не читается и не пишется.
   assert.equal(s.autoMemoryEnabled, false, 'нужен "autoMemoryEnabled": false');
-  // Процесс запускается фразой без вопроса, как кнопкой. Поэтому программу процесса Claude пишет только
-  // через окно разрешения: правка processes/ всегда спрашивает человека.
+  // Процесс запускается фразой без вопроса, как кнопкой. Правку processes/ решает режим, который выбрал человек.
   assert.ok(s.permissions.allow.includes('Bash(node tools/processes.mjs*)'), 'нужно разрешение Bash(node tools/processes.mjs*)');
-  assert.ok((s.permissions.ask ?? []).includes('Edit(./processes/**)'), 'нужен вопрос Edit(./processes/**)');
+  assert.deepEqual(s.permissions.ask ?? [], [], 'обязательных вопросов нет');
   // Демо копирует templates/processes в processes/ и запускается той же разрешённой командой: шаблоны не правятся.
   assert.ok(s.permissions.deny.includes('Edit(./templates/**)'), 'нужен запрет Edit(./templates/**)');
 });
@@ -151,20 +151,12 @@ test('lint: каждый @import из CLAUDE.md есть в репо или в M
   assert.deepEqual(missing, []);
 });
 
-// Хук проверки команд: файл курса в репо (обновление его привезёт), имя ASCII, правка под запретом.
-test('хук .claude/hooks/guard.mjs отслеживается, имя ASCII, зарегистрирован в settings.json', () => {
-  const tracked = execFileSync('git', ['ls-files', '--cached', '-z'], { cwd: ROOT, encoding: 'utf8' })
-    .split('\0')
-    .filter(Boolean);
-  const hooks = tracked.filter((f) => f.startsWith('.claude/hooks/'));
-  assert.deepEqual(hooks, ['.claude/hooks/guard.mjs']);
-  assert.ok(hooks.every((f) => /^[A-Za-z0-9._/-]+$/.test(f)));
-  const ignored = (p) => spawnSync('git', ['check-ignore', '-q', '--no-index', p], { cwd: ROOT }).status === 0;
-  assert.equal(ignored('.claude/hooks/guard.mjs'), false);
-  const s = JSON.parse(read('.claude/settings.json'));
-  const cmds = (s.hooks?.PreToolUse ?? []).flatMap((h) => h.hooks.map((x) => [x.command, ...(x.args ?? [])].join(' ')));
-  assert.ok(cmds.some((c) => c.includes('.claude/hooks/guard.mjs')), 'хук не зарегистрирован');
-  assert.ok(s.permissions.deny.includes('Edit(./.claude/hooks/**)'), 'нужен запрет Edit(./.claude/hooks/**)');
+// Без своих хуков: какие действия спрашивать, решает режим Claude Code, который выбрал человек.
+test('кабинет и шаблон проекта сервиса без хуков', () => {
+  for (const f of ['.claude/settings.json', 'templates/service-project/.claude/settings.json']) {
+    assert.equal(JSON.parse(read(f)).hooks, undefined, `${f}: хук`);
+  }
+  assert.deepEqual(files.filter((f) => f.includes('.claude/hooks/')), []);
 });
 
 test('файлы участника вне репо: обновление их не перезапишет', () => {
@@ -206,7 +198,7 @@ test('в tools нет системного копирования папок (п
 });
 
 // Скиллы курса загружаются как скиллы: встроенная команда в их тексте выполнилась бы сама при запуске.
-// Шаблон тот же, что у сторожа кабинета: восклицательный знак и команда в обратных кавычках или блок ```!.
+// Шаблон тот же, что у node tools/processes.mjs read: восклицательный знак и команда в обратных кавычках или блок ```!.
 test('скиллы курса без встроенных команд', () => {
   const pattern = new RegExp(['!', '[ \\t]*`[^`\\n]+`|', '`'.repeat(3), '[ \\t]*!'].join(''));
   const bad = files.filter((f) => (f.startsWith('.claude/skills/') || f.startsWith(USER_SKILLS)) && pattern.test(read(f)));
@@ -265,12 +257,12 @@ test('добавить процесс: всегда программа (kind scr
   const guide = read('.claude/skills/add-process/programma.md');
   assert.ok(guide.includes('URGENT = "срочно (не тема)"') && guide.includes('"срочно (не тема)": ['));
   assert.ok(skill.includes('| срочно (не тема) | <слова срочности через запятую> |'));
-  // Эталон без строк (Claude строки файла человека не читает), основа без скилла, интернет в программе.
-  assert.ok(!skill.includes('"срочно": ['), 'в примере эталона не должно быть строк: темы строк Claude не определяет');
-  assert.ok(skill.includes('Файлы человека в модель для анализа не идут') && rules0().includes('Файлы человека в модель для анализа не идут'));
+  // Эталон без строк, основа без скилла, интернет в программе. Данные как есть: правила компании это разрешают.
+  assert.ok(!skill.includes('"срочно": ['), 'в примере эталона не должно быть строк');
+  assert.ok(skill.includes('Правила компании разрешают работать с файлами человека как есть') && rules0().includes('правила компании разрешают загружать и обрабатывать'));
   assert.ok(skill.includes('«Из чего собираем процесс?»') && skill.includes('«Опишу своими словами»') && skill.includes('### Известный ответ'));
   assert.ok(guide.includes('## Данные из интернета') && guide.includes('# --- Данные из интернета ---'));
-  // Модель внутри сервиса можно, только через tools/llm.py с проверкой данных.
+  // Модель внутри сервиса можно, только через tools/llm.py (журнал обращений, предел объёма).
   assert.ok(guide.includes('## Модель внутри программы') && guide.includes('llm.LLMBlocked'));
   assert.ok(rules0().includes('tools/llm.py'));
   assert.ok(run.includes('→ срочно') && run.includes('«срочно (не тема)»'));
@@ -314,7 +306,7 @@ test('запуск двойным щелчком: start-cabinet.cmd и .command'
 // Сервис = отдельный проект, кабинет = витрина: шаблон проекта и скиллы, которые работают в любой папке.
 test('шаблон проекта сервиса: файлы, lib пустая, settings проекта, service.json по договору', () => {
   const T = 'templates/service-project/';
-  for (const f of ['CLAUDE.md', 'README.md', 'service.json', 'main.py', '.gitignore', '.claude/settings.json', '.claude/hooks/guard.mjs',
+  for (const f of ['CLAUDE.md', 'README.md', 'service.json', 'main.py', '.gitignore', '.claude/settings.json',
     'input/.gitkeep', 'output/.gitkeep', 'lib/.gitkeep']) {
     assert.ok(files.includes(T + f), `нет ${T}${f}`);
   }
@@ -326,21 +318,13 @@ test('шаблон проекта сервиса: файлы, lib пустая, 
   const s = JSON.parse(read(`${T}.claude/settings.json`));
   assert.equal(s.model, 'sonnet');
   assert.equal(s.autoMemoryEnabled, false, 'уроки пишутся в правила проекта, не в автопамять');
-  assert.equal(s.permissions.disableBypassPermissionsMode, 'disable');
+  assert.equal(s.permissions.disableBypassPermissionsMode, undefined, 'режим выбирает человек');
   assert.equal(s.env.CLAUDE_CODE_DISABLE_EXPLORE_PLAN_AGENTS, '1');
   assert.equal(s.env.PYTHONUTF8, '1');
-  for (const d of ['Read(./.env)', 'Read(./.env.*)', 'Read(./**/.env)', 'Read(./**/.env.*)', 'Edit(./lib/**)', 'Edit(./.claude/hooks/**)']) {
+  for (const d of ['Read(./.env)', 'Read(./.env.*)', 'Read(./**/.env)', 'Read(./**/.env.*)', 'Edit(./lib/**)']) {
     assert.ok(s.permissions.deny.includes(d), `нет запрета ${d}`);
   }
   for (const a of ['Bash(python main.py*)', 'Bash(py main.py*)', 'Bash(python lib/read_table.py*)']) assert.ok(s.permissions.allow.includes(a), a);
-  const hooks = s.hooks.PreToolUse.flatMap((h) => h.hooks.map((x) => ({ ...x, matcher: h.matcher })));
-  const guard = hooks.find((h) => (h.args ?? []).some((a) => a.endsWith('/.claude/hooks/guard.mjs')));
-  assert.ok(guard, 'сторож проекта не зарегистрирован');
-  assert.equal(guard.command, 'node', 'сторож запускается без оболочки');
-  assert.deepEqual(guard.args, ['${CLAUDE_PROJECT_DIR}/.claude/hooks/guard.mjs']);
-  for (const tool of ['Bash', 'PowerShell', 'Monitor', 'Write', 'Edit', 'MultiEdit', 'NotebookEdit', 'Artifact']) {
-    assert.ok(guard.matcher.split('|').includes(tool), `сторож не видит ${tool}`);
-  }
 });
 
 test('шаблон проекта сервиса: .gitignore закрывает .env, данные и результат, но не .gitkeep', () => {
@@ -357,7 +341,7 @@ test('шаблон проекта сервиса: .gitignore закрывает 
 test('шаблон проекта сервиса: правила проекта (данные, секреты, модель, известный ответ, уроки, «добавь в кабинет»)', () => {
   const rules = read('templates/service-project/CLAUDE.md').replace(/\r\n/g, '\n');  // git на Windows: CRLF
   for (const must of ['## Уроки', 'Уроков пока нет.', 'известный ответ', 'до слова «готово»', '`python lib/read_table.py "input/<файл>" --rows 5`',
-    'Строки файла целиком в разговор не бери', '`.env`', 'не открываешь', 'lib/llm.py', 'output/result.json', '«добавь в кабинет»',
+    'Строки файла можно читать и разбирать', '`.env`', 'не открываешь', 'lib/llm.py', 'output/result.json', '«добавь в кабинет»',
     'kabinet-dobav-v-kabinet', 'subprocess', 'eval', 'PYTHONPATH=lib']) {
     assert.ok(rules.includes(must), `в правилах проекта нет ${must}`);
   }
