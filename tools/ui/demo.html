@@ -1,0 +1,224 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Набор интерфейса: витрина</title>
+  <!-- Витрина набора ui/ кабинета. Файлы лежат рядом; на странице сервиса пути ../../../ui/<файл>. -->
+  <link rel="stylesheet" href="basecoat.css">
+  <link rel="stylesheet" href="brand.css">
+  <link rel="stylesheet" href="kabinet.css">
+  <script src="kabinet.js"></script>
+  <script src="tailwind.js"></script>
+  <script src="chart.js" defer></script>
+  <script src="basecoat.js" defer></script>
+  <script src="basecoat-chart.js" defer></script>
+</head>
+<body>
+  <main class="mx-auto max-w-5xl px-4 py-6 flex flex-col gap-6">
+    <header class="flex flex-wrap items-center justify-between gap-3">
+      <div>
+        <h1 class="text-2xl font-semibold">Набор интерфейса</h1>
+        <p class="text-muted-foreground text-sm">Все компоненты для своих страниц сервисов: Basecoat, Tailwind, графики, kabinet.js.</p>
+      </div>
+      <div class="flex gap-2" role="group" aria-label="Тема">
+        <button type="button" class="btn" data-variant="outline" data-size="sm" data-theme-set="light">Светлая</button>
+        <button type="button" class="btn" data-variant="outline" data-size="sm" data-theme-set="dark">Тёмная</button>
+        <button type="button" class="btn" data-variant="ghost" data-size="sm" data-theme-set="auto">Как в системе</button>
+      </div>
+    </header>
+
+    <section class="flex flex-col gap-3">
+      <h2 class="text-lg font-semibold">Кнопки</h2>
+      <div class="flex flex-wrap gap-2">
+        <button type="button" class="btn">Основная</button>
+        <button type="button" class="btn" data-variant="secondary">Вторая</button>
+        <button type="button" class="btn" data-variant="outline">Контурная</button>
+        <button type="button" class="btn" data-variant="ghost">Тихая</button>
+        <button type="button" class="btn" data-variant="destructive">Удалить</button>
+        <button type="button" class="btn" data-variant="link">Ссылка</button>
+        <button type="button" class="btn" data-size="sm">Маленькая</button>
+        <button type="button" class="btn" disabled>Недоступна</button>
+      </div>
+    </section>
+
+    <section class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div class="card"><section class="stat">
+        <span class="stat-label">Выручка за неделю</span>
+        <span class="stat-value" id="s-sum"></span>
+        <span class="stat-delta down">-21,8% к прошлой неделе</span>
+      </section></div>
+      <div class="card"><section class="stat">
+        <span class="stat-label">Чеков</span>
+        <span class="stat-value" id="s-checks"></span>
+        <span class="stat-delta up">+4,2%</span>
+      </section></div>
+      <div class="card"><section class="stat">
+        <span class="stat-label">Средний чек</span>
+        <span class="stat-value" id="s-avg"></span>
+        <span class="stat-delta">без изменений</span>
+      </section></div>
+      <div class="card"><section class="stat">
+        <span class="stat-label">Доля возвратов</span>
+        <span class="stat-value" id="s-pct"></span>
+      </section></div>
+    </section>
+
+    <section class="grid gap-4 md:grid-cols-2">
+      <div class="card">
+        <header>
+          <h2>Карточка</h2>
+          <p>Заголовок, описание, содержимое и подвал.</p>
+        </header>
+        <section class="flex flex-col gap-2 text-sm">
+          <p>Статусы, как в кабинете:</p>
+          <div class="flex flex-wrap gap-2">
+            <span class="badge badge-ok">зелёный</span>
+            <span class="badge badge-warn">жёлтый</span>
+            <span class="badge badge-bad">красный</span>
+            <span class="badge badge-none">нет данных</span>
+            <span class="badge" data-variant="outline">разобрать вручную</span>
+            <span class="badge">основной</span>
+            <span class="badge" data-variant="secondary">второй</span>
+          </div>
+          <p>Из кода: <span id="badges" class="inline-flex gap-2"></span></p>
+        </section>
+        <footer class="flex gap-2">
+          <button type="button" class="btn" data-size="sm" id="toast-ok">Уведомление</button>
+          <button type="button" class="btn" data-size="sm" data-variant="outline" id="toast-err">Ошибка</button>
+        </footer>
+      </div>
+
+      <div class="card">
+        <header>
+          <h2>Поля</h2>
+          <p>Ввод, выбор, переключатель.</p>
+        </header>
+        <section>
+          <form class="flex flex-col gap-4" onsubmit="return false">
+            <div class="field">
+              <label for="f-name">Точка</label>
+              <input class="input" id="f-name" type="text" placeholder="Астана, Мега 1">
+            </div>
+            <div class="field">
+              <label for="f-week">Неделя</label>
+              <select class="select w-full" id="f-week">
+                <option>26.10-01.11</option>
+                <option selected>02.11-08.11</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="f-date">Дата</label>
+              <input class="input" id="f-date" type="date">
+            </div>
+            <label class="label gap-3">
+              <input type="checkbox" role="switch" class="input" checked> Только с падением
+            </label>
+          </form>
+        </section>
+      </div>
+    </section>
+
+    <section class="flex flex-col gap-3">
+      <h2 class="text-lg font-semibold">Сообщения</h2>
+      <div class="alert">
+        <h2>Расчёт за 02.11-08.11</h2>
+        <section>Одна строка не разобрана: сумма не число. Она в таблице с пометкой «разобрать вручную».</section>
+      </div>
+      <div class="alert" data-variant="destructive">
+        <h2>Нет файла с данными</h2>
+        <section>Положите выгрузку в папку input и нажмите «Запустить».</section>
+      </div>
+    </section>
+
+    <section class="tabs" id="demo-tabs">
+      <nav role="tablist" aria-orientation="horizontal" class="w-full">
+        <button type="button" role="tab" id="t-points-tab" aria-controls="t-points" aria-selected="true" tabindex="0">По точкам</button>
+        <button type="button" role="tab" id="t-days-tab" aria-controls="t-days" aria-selected="false" tabindex="0">По дням</button>
+        <button type="button" role="tab" id="t-share-tab" aria-controls="t-share" aria-selected="false" tabindex="0">Доли</button>
+        <button type="button" role="tab" id="t-line-tab" aria-controls="t-line" aria-selected="false" tabindex="0">Линия</button>
+      </nav>
+      <div role="tabpanel" id="t-points" aria-labelledby="t-points-tab" tabindex="-1" aria-selected="true">
+        <div class="card"><section><canvas id="c-bar"></canvas></section></div>
+      </div>
+      <div role="tabpanel" id="t-days" aria-labelledby="t-days-tab" tabindex="-1" aria-selected="false" hidden>
+        <div class="card"><section><canvas id="c-area"></canvas></section></div>
+      </div>
+      <div role="tabpanel" id="t-share" aria-labelledby="t-share-tab" tabindex="-1" aria-selected="false" hidden>
+        <div class="card"><section class="mx-auto w-full max-w-sm"><canvas id="c-doughnut"></canvas></section></div>
+      </div>
+      <div role="tabpanel" id="t-line" aria-labelledby="t-line-tab" tabindex="-1" aria-selected="false" hidden>
+        <div class="card"><section><canvas id="c-line"></canvas></section></div>
+      </div>
+    </section>
+
+    <section class="flex flex-col gap-3">
+      <h2 class="text-lg font-semibold">Таблица результата</h2>
+      <div class="card"><section id="table"></section></div>
+    </section>
+  </main>
+
+  <script>
+    kabinet.ready(function () {
+      var points = [
+        { label: 'Мега 1', week1: 5810400, week2: 5668600 },
+        { label: 'Хан Шатыр', week1: 4920300, week2: 3610200 },
+        { label: 'Керуен', week1: 3870100, week2: 3402500 },
+        { label: 'Евразия', week1: 2504900, week2: 2499800 },
+      ];
+      var days = [
+        { label: '02.11', sum: 2810400 }, { label: '03.11', sum: 2533100 }, { label: '04.11', sum: 2604900 },
+        { label: '05.11', sum: 2490300 }, { label: '06.11', sum: 2975600 }, { label: '07.11', sum: 3011200 },
+        { label: '08.11', sum: 2422200 },
+      ];
+
+      document.getElementById('s-sum').textContent = kabinet.money(18847700);
+      document.getElementById('s-checks').textContent = kabinet.number(3412);
+      document.getElementById('s-avg').textContent = kabinet.money(5523.9);
+      document.getElementById('s-pct').textContent = kabinet.percent(0.4);
+
+      var badges = document.getElementById('badges');
+      ['green', 'yellow', 'red', 'grey'].forEach(function (s) { badges.appendChild(kabinet.badge(s)); });
+      badges.appendChild(kabinet.badge('info', 'пометка'));
+
+      document.getElementById('toast-ok').addEventListener('click', function () {
+        kabinet.toast('Готово', 'success', 'Файл сохранён в output.');
+      });
+      document.getElementById('toast-err').addEventListener('click', function () {
+        kabinet.toast('Не вышло', 'error', 'Файл открыт в Excel.');
+      });
+
+      kabinet.chart('#c-bar', {
+        type: 'bar', data: points,
+        series: { week1: { label: '26.10-01.11' }, week2: { label: '02.11-08.11' } },
+      });
+      kabinet.chart('#c-area', { type: 'area', data: days, series: { sum: { label: 'Выручка, тг' } } });
+      kabinet.chart('#c-doughnut', { type: 'doughnut', data: points, series: { week2: { label: 'Выручка, тг' } }, legend: true });
+      kabinet.chart('#c-line', {
+        type: 'line', data: points,
+        series: { week1: { label: '26.10-01.11' }, week2: { label: '02.11-08.11' } },
+      });
+
+      kabinet.table('#table', {
+        columns: ['Точка', 'Неделя 1, тг', 'Неделя 2, тг', 'Изменение, %'],
+        rows: [
+          ['Мега 1', 5810400, 5668600, -2.4],
+          ['Хан Шатыр', 4920300, 3610200, -26.6],
+          ['Керуен', 3870100, 3402500, -12.1],
+          ['Евразия', null, 2499800, null],
+          ['строка 214', null, null, null],
+        ],
+        row_status: ['green', 'red', 'yellow', 'grey', 'info'],
+        row_note: [null, 'падение 20% и больше', null, 'нет данных за неделю 1', 'разобрать вручную: сумма «12 0OO»'],
+      });
+
+      document.querySelectorAll('[data-theme-set]').forEach(function (b) {
+        b.addEventListener('click', function () {
+          try { localStorage.setItem('kabinet-theme', b.getAttribute('data-theme-set')); } catch (e) { /* нет хранилища */ }
+          kabinet.theme();
+        });
+      });
+    });
+  </script>
+</body>
+</html>

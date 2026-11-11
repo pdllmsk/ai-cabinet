@@ -1,0 +1,57 @@
+{
+  "model": "sonnet",
+  "language": "russian",
+  "autoMemoryEnabled": false,
+  "env": {
+    "AI_SERVICE_PROJECT": "1",
+    "PYTHONUTF8": "1",
+    "PYTHONIOENCODING": "utf-8",
+    "CLAUDE_CODE_DISABLE_EXPLORE_PLAN_AGENTS": "1"
+  },
+  "permissions": {
+    "defaultMode": "acceptEdits",
+    "disableBypassPermissionsMode": "disable",
+    "allow": [
+      "Bash(python main.py*)",
+      "Bash(py main.py*)",
+      "Bash(python3 main.py*)",
+      "Bash(python lib/read_table.py*)",
+      "Bash(py lib/read_table.py*)",
+      "Bash(python3 lib/read_table.py*)",
+      "Bash(python lib/llm.py*)",
+      "Bash(py lib/llm.py*)",
+      "Bash(python3 lib/llm.py*)",
+      "Bash(python api.py*)",
+      "Bash(py api.py*)",
+      "Bash(python3 api.py*)"
+    ],
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Read(./**/.env)",
+      "Read(./**/.env.*)",
+      "Edit(./lib/**)",
+      "Edit(./.claude/hooks/**)",
+      "Edit(./.claude/settings.json)",
+      "Bash(rm -rf *)",
+      "Agent(Explore)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|PowerShell|Monitor|Write|Edit|MultiEdit|NotebookEdit|Artifact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": [
+              "${CLAUDE_PROJECT_DIR}/.claude/hooks/guard.mjs"
+            ],
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}

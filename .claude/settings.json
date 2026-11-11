@@ -1,0 +1,66 @@
+{
+  "model": "sonnet",
+  "language": "russian",
+  "autoMemoryEnabled": false,
+  "env": {
+    "AI_CABINET": "1",
+    "PYTHONUTF8": "1",
+    "PYTHONIOENCODING": "utf-8",
+    "CLAUDE_CODE_DISABLE_EXPLORE_PLAN_AGENTS": "1"
+  },
+  "permissions": {
+    "defaultMode": "acceptEdits",
+    "disableBypassPermissionsMode": "disable",
+    "allow": [
+      "Bash(node tools/serve.mjs*)",
+      "Bash(node tools/check.mjs*)",
+      "Bash(node tools/update.mjs*)",
+      "Bash(node tools/processes.mjs*)",
+      "Bash(node tools/services.mjs*)",
+      "Bash(node tools/selftest.mjs*)",
+      "Bash(python tools/read_table.py*)",
+      "Bash(py tools/read_table.py*)",
+      "Bash(python3 tools/read_table.py*)",
+      "Bash(python tools/analiz.py*)",
+      "Bash(py tools/analiz.py*)",
+      "Bash(python3 tools/analiz.py*)",
+      "Bash(python tools/llm.py*)",
+      "Bash(py tools/llm.py*)",
+      "Bash(python3 tools/llm.py*)"
+    ],
+    "ask": [
+      "Edit(./processes/**)"
+    ],
+    "deny": [
+      "Edit(./input/**)",
+      "Edit(./tools/**)",
+      "Edit(./templates/**)",
+      "Edit(./journal/**)",
+      "Edit(./.claude/hooks/**)",
+      "Bash(rm -rf *)",
+      "Bash(git push *)",
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Read(./**/.env)",
+      "Read(./**/.env.*)",
+      "Agent(Explore)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|PowerShell|Monitor|Write|Edit|MultiEdit|NotebookEdit|Artifact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node",
+            "args": [
+              "${CLAUDE_PROJECT_DIR}/.claude/hooks/guard.mjs"
+            ],
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}

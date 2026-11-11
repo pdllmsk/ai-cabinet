@@ -1,0 +1,100 @@
+/* Тема кабинета для Basecoat: страницы сервисов выглядят как страница кабинета. Подключается после basecoat.css.
+   Цвет компании приходит из ui/brand.css (переменные бренда под именами --brand-*, их собирает кабинет из
+   theme.css бренда); нет бренда: синий цвет кабинета. Тёмная тема: класс dark у <html>, его ставит kabinet.js
+   по выбору темы в кабинете. Контраст текста не ниже 4,5:1, как в кабинете (templates/site/dark.css). */
+:root {
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+  --radius: 0.75rem;
+  --background: #f4f6f9;
+  --foreground: #172033;
+  --card: #ffffff;
+  --card-foreground: #172033;
+  --popover: #ffffff;
+  --popover-foreground: #172033;
+  --primary: var(--brand-accent, #2456c9);
+  --primary-foreground: var(--brand-accent-ink, #ffffff);
+  --secondary: #eef1f5;
+  --secondary-foreground: #172033;
+  --muted: #f0f2f5;
+  --muted-foreground: #5b6577;
+  --accent: #eef1f5;
+  --accent-foreground: #172033;
+  --destructive: #b42318;
+  --border: #e2e7ee;
+  --input: #cfd6e0;
+  --ring: var(--brand-accent-dark, #1a3f96);
+  /* Статусы строк и карточек, как в кабинете: green, yellow, red, grey («нет данных»). */
+  --ok: #1f7a3a;
+  --ok-bg: #effaf2;
+  --warn: #8a5300;
+  --warn-bg: #fff7e0;
+  --bad: #b42318;
+  --bad-bg: #fef1f0;
+  --none: #4f5662;
+  --none-bg: #f0f2f5;
+  /* Цвета рядов графика по порядку: первый ряд цветом компании, остальные различимы между собой. */
+  --chart-1: var(--primary);
+  --chart-2: #475569;
+  --chart-3: #d97706;
+  --chart-4: #0f766e;
+  --chart-5: #7c3aed;
+  color-scheme: light;
+}
+
+.dark {
+  --background: #0f1218;
+  --foreground: #e6e9ef;
+  --card: #181c24;
+  --card-foreground: #e6e9ef;
+  --popover: #181c24;
+  --popover-foreground: #e6e9ef;
+  --primary: var(--brand-accent, #2456c9);
+  --primary-foreground: var(--brand-accent-ink, #ffffff);
+  --secondary: #262b34;
+  --secondary-foreground: #e6e9ef;
+  --muted: #1f242d;
+  --muted-foreground: #a3abb9;
+  --accent: #262b34;
+  --accent-foreground: #e6e9ef;
+  --destructive: #ff9b91;
+  --border: #2a303b;
+  --input: #3b4351;
+  --ring: color-mix(in srgb, var(--primary) 62%, #ffffff);
+  --ok: #74d491;
+  --ok-bg: rgba(46, 158, 80, 0.18);
+  --warn: #f3c65a;
+  --warn-bg: rgba(233, 168, 0, 0.15);
+  --bad: #ff9b91;
+  --bad-bg: rgba(217, 45, 32, 0.18);
+  --none: #b8bfcb;
+  --none-bg: #262b34;
+  --chart-1: color-mix(in srgb, var(--primary) 80%, #ffffff);
+  --chart-2: #94a3b8;
+  --chart-3: #fbbf24;
+  --chart-4: #2dd4bf;
+  --chart-5: #a78bfa;
+  color-scheme: dark;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+}
+
+/* Отметки статуса: badge из Basecoat в цветах статусов кабинета. */
+.badge.badge-ok { background: var(--ok-bg); color: var(--ok); border-color: transparent; }
+.badge.badge-warn { background: var(--warn-bg); color: var(--warn); border-color: transparent; }
+.badge.badge-bad { background: var(--bad-bg); color: var(--bad); border-color: transparent; }
+.badge.badge-none { background: var(--none-bg); color: var(--none); border-color: transparent; }
+
+/* Плитка с одним числом: подпись, число, необязательная строка изменения. */
+.stat { display: flex; flex-direction: column; gap: 0.25rem; }
+.stat-label { color: var(--muted-foreground); font-size: 0.875rem; }
+.stat-value { font-size: clamp(1.25rem, 0.9rem + 1.2vw, 1.75rem); font-weight: 600; line-height: 1.2; font-variant-numeric: tabular-nums; }
+.stat-delta { font-size: 0.875rem; font-variant-numeric: tabular-nums; color: var(--muted-foreground); }
+.stat-delta.up { color: var(--ok); }
+.stat-delta.down { color: var(--bad); }
+
+/* Числа в таблицах выравниваются по правому краю. */
+.table td.num, .table th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }

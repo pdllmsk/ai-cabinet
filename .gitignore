@@ -1,0 +1,22 @@
+node_modules/
+.DS_Store
+*.tmp
+input/*
+!input/.gitkeep
+!/input/case/
+output/*
+!output/.gitkeep
+/me/
+/site/
+/processes/
+/journal/
+.claude/settings.local.json
+/.claude/worktrees/
+__pycache__/
+*.pyc
+
+# секреты сервисов (ключи, токены): только на компьютере, не в git и не для Claude
+.env
+.env.*
+**/.env
+**/.env.*

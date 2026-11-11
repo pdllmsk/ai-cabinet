@@ -1,0 +1,7 @@
+{
+  "title": "Светофор точек продаж",
+  "phrase": "запусти светофор точек",
+  "kind": "script",
+  "input": "input/svetofor-tochek/",
+  "output": "output/svetofor-tochek/"
+}

@@ -1,0 +1,9 @@
+{
+  "name": "Новый сервис",
+  "about": "Что делает сервис, одной фразой: Claude допишет, когда сервис будет готов",
+  "kind": "run",
+  "run": "main.py",
+  "result": "output/result.json",
+  "input": "input/",
+  "page": null
+}
