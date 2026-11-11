@@ -87,7 +87,8 @@ test('нет имени клиента (по хешам)', () => {
 // python3 только в строке про Mac: на Windows python3 открывает заглушку Microsoft Store. Исключение: правило
 // allow в настройках шаблона проекта сервиса ("Bash(python3 main.py*)"), это не текст для человека и Claude.
 test('тексты участника без тире (U+2012-U+2015) и python3 вне Mac', (t) => {
-  const mine = files.filter(PARTICIPANT);
+  // tools/design.md тоже: его формулировки Claude передаёт человеку.
+  const mine = files.filter((f) => PARTICIPANT(f) || f === 'tools/design.md');
   if (mine.length === 0) return t.skip('нет файлов участника');
   const py3 = (l) => l.includes('python3') && !l.includes('Mac') && !/^\s*"Bash\(python3 [^"]*\)",?\s*$/.test(l);
   const bad = mine.filter((f) => /[\u2012-\u2015]/.test(read(f)) || read(f).split('\n').some(py3));
@@ -385,4 +386,41 @@ test('скиллы kabinet-*: фразы, команды кабинета в к�
   assert.match(rules, /\| «новый сервис», «создай сервис» \|[^\n]*kabinet-novyi-servis/);
   assert.ok(rules.includes('## Сервисы-проекты') && rules.includes('templates/user-skills/kabinet-novyi-servis/SKILL.md'));
   assert.ok(read('START.md').includes('**новый сервис**'));
+});
+
+// Правила понятной страницы и карточки: один файл курса, на него ссылаются правила проекта сервиса и скиллы процессов.
+test('design.md: ссылки-обязанности в правилах проекта сервиса и в скиллах процессов', () => {
+  assert.ok(files.includes('tools/design.md'), 'нет tools/design.md');
+  const proj = read('templates/service-project/CLAUDE.md');
+  const section = (title) => proj.split(/\n## /).find((s) => s.startsWith(title)) ?? '';
+  assert.match(section('Результат: output/result.json'), /lib\/design\.md/);
+  assert.match(section('Своя страница'), /lib\/design\.md/);
+  assert.match(read('.claude/skills/add-process/SKILL.md'), /tools\/design\.md/);
+  assert.match(read('.claude/skills/run-process/SKILL.md'), /tools\/design\.md/);
+});
+
+// В файлах курса нет указаний на сторонние плагины и их установку, в design.md ещё и на сторонние библиотеки и вид.
+// Названий плагинов-источников design.md в репозитории нет даже в тесте: только хеши, как у имени клиента.
+const PLUGIN_HASHES = new Map([
+  [13, '2931516d2e2c8bd56a36948aa11421aaf8071cff52171badf85bdf039f38b633'],
+  [15, '7429eb2e51b7dc87b330ea49667c58234ee4326ad3bfb64e60fc6afb13149f8b'],
+]);
+const hasPluginName = (text) => {
+  const t = text.toLowerCase();
+  for (const [n, h] of PLUGIN_HASHES) {
+    for (let i = t.indexOf('-'); i !== -1; i = t.indexOf('-', i + 1)) {
+      for (let s = Math.max(0, i - n + 1); s <= i && s + n <= t.length; s++) if (sha(t.slice(s, s + n)) === h) return true;
+    }
+  }
+  return false;
+};
+test('без сторонних плагинов; design.md только в терминах кабинета', () => {
+  // Набор интерфейса tools/ui чужой и сжатый: в нём «plugin» свой, его не смотрим.
+  const course = files.filter((f) => !isCase(f) && !f.startsWith('tools/ui/') && /\.(md|csv|txt|json|html|mjs|js|py|cmd|command)$/i.test(f));
+  const config = /enabledPlugins|extraKnownMarketplaces|claude plugin install/;
+  const bad = course.filter((f) => f !== 'tools/tests/template.test.mjs' && (config.test(read(f)) || hasPluginName(read(f))));
+  assert.deepEqual(bad, []);
+  const d = read('tools/design.md');
+  const foreign = d.match(/плагин|plugin|скилл|skill|tailwind|basecoat|chart\.js|https?:|rgb\(|font-family|#[0-9a-f]{3,8}\b|\bQ\d+\b/gi);
+  assert.equal(foreign, null, `в tools/design.md: ${foreign}`);
 });

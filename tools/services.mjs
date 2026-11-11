@@ -58,7 +58,8 @@ export const REGISTRY = ['me', 'servisy.json'];
 export const SERVICES_DIR_NAME = 'Сервисы';
 export const TEMPLATE = ['templates', 'service-project'];
 // ui.md: каталог набора интерфейса (tools/ui) для своей страницы сервиса, его читает Claude в проекте.
-export const LIB_FILES = ['llm.py', 'read_table.py', 'service_api.py', 'ui.md'];
+// design.md: правила понятной страницы и карточки, их читает Claude в проекте.
+export const LIB_FILES = ['llm.py', 'read_table.py', 'service_api.py', 'ui.md', 'design.md'];
 export const KINDS = ['run', 'page'];
 export const PAGE_DIR = 'page';
 export const OUTPUT_DIR = 'output';

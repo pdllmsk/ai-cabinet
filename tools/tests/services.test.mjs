@@ -124,7 +124,7 @@ test('new: папка латиницей в «Сервисы» рядом с к�
   assert.equal(s.name, 'Сводка продаж');
   assert.equal(s.kind, 'run');
   assert.equal(s.run, 'main.py');
-  assert.deepEqual(LIB_FILES, ['llm.py', 'read_table.py', 'service_api.py', 'ui.md']);
+  assert.deepEqual(LIB_FILES, ['llm.py', 'read_table.py', 'service_api.py', 'ui.md', 'design.md']);
   for (const f of LIB_FILES) {
     assert.ok(readFileSync(join(dir, 'lib', f)).equals(readFileSync(join(cab, 'tools', f))), f);
   }
@@ -301,6 +301,8 @@ test('run: по имени из реестра и по папке; PYTHONPATH = 
   const same = (a, b) => realpathSync.native(a).toLowerCase() === realpathSync.native(b).toLowerCase();
   assert.ok(same(res.summary, join(libDir, 'lib')), `llm и read_table из lib проекта: ${res.summary}`);
   assert.ok(existsSync(join(libDir, 'lib', 'llm.py')), 'run кладёт lib сам');
+  // Проект, созданный до design.md: файл появляется при первом запуске.
+  assert.ok(readFileSync(join(libDir, 'lib', 'design.md')).equals(readFileSync(join(cab, 'tools', 'design.md'))), 'run кладёт design.md');
   assert.equal(cli(['run', 'net-takogo']).code, 2);
 });
 
