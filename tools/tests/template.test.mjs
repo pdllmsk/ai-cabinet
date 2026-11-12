@@ -450,7 +450,7 @@ test('публикация: скиллы kabinet-podkluchi-publikaciyu и kabine
   }
   for (const must of ['create_project', 'confirm_cost', 'get_project', 'restore_project', 'pause_project', 'list_projects', 'execute_sql',
     'apply_migration', 'list_migrations', 'create_repository', 'push_files', 'https://github.com/new?name=', 'create_git_project',
-    'create_project_env', '`upsert: "true"`', '"sensitive"', 'list_deployments', 'list_deployment_events', 'web_fetch_vercel_url',
+    'create_project_env', '`upsert: "true"`', '"sensitive"', 'list_deployments', 'list_deployment_events', 'web_fetch_vercel_url', 'update_project', '"ssoProtection": null',
     'aws-0-', 'aws-1-', 'do-perevoda', 'cookie_secret', '`private: true`']) {
     assert.ok(pub.includes(must), `опубликуй: нет ${must}`);
   }
