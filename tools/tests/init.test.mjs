@@ -116,8 +116,8 @@ test('init: кабинет, поставленный до сервиса «Ан�
 // Пользовательские скиллы: templates/user-skills/kabinet-* в папку скиллов Claude (~/.claude/skills).
 const SKILLS = readdirSync(join(ROOT, 'templates', 'user-skills')).filter((n) => USER_SKILL_RE.test(n)).sort();
 
-test('скиллы: в шаблонах курса новый сервис, добавить в кабинет, подключить публикацию, опубликовать', () => {
-  assert.deepEqual(SKILLS, ['kabinet-dobav-v-kabinet', 'kabinet-novyi-servis', 'kabinet-opublikuy', 'kabinet-podkluchi-publikaciyu']);
+test('скиллы: в шаблонах курса новый сервис, добавить в кабинет, подключить базу, подключить публикацию, опубликовать', () => {
+  assert.deepEqual(SKILLS, ['kabinet-dobav-v-kabinet', 'kabinet-novyi-servis', 'kabinet-opublikuy', 'kabinet-podkluchi-bazu', 'kabinet-podkluchi-publikaciyu']);
 });
 
 test('скиллы: ставятся с путём к кабинету, повтор ничего не меняет, свои обновляются, чужие целы', () => {

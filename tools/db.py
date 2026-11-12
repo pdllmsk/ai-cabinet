@@ -1,8 +1,10 @@
-"""База сервиса вида web: Postgres в Supabase через пул соединений. Кабинет кладёт этот файл в lib/ проекта.
+"""База сервиса: Postgres в Supabase через пул соединений. Кабинет кладёт этот файл в lib/ проекта вида web
+и сервиса на компьютере с базой (поле db в service.json, фраза «подключи базу»).
 
 Подключение из переменной DATABASE_URL (её пишет node "<кабинет>/tools/web.mjs" secret в .env проекта, на Vercel
-она заведена в настройках проекта). Таблицы сервиса лежат в схеме app: роль сервиса ищет их там сама
-(search_path роли), писать app.<таблица> тоже можно.
+она заведена в настройках проекта). Переменной нет в окружении (сервис на компьютере запущен кнопкой
+«Запустить»): берётся из .env в папке проекта. Таблицы сервиса лежат в схеме app: роль сервиса ищет их там
+сама (search_path роли), писать app.<таблица> тоже можно.
 
     from db import query, execute, insert_rows, transaction
 
@@ -16,7 +18,8 @@
 Данные пользователя попадают в SQL только параметрами (%s с кортежем или %(имя)s со словарём), никогда
 склейкой строк: это проверяет node "<кабинет>/tools/web.mjs" check.
 
-Одно подключение на запрос к сервису: lib/web.py закрывает его в конце (close()).
+Одно подключение на запрос к сервису: lib/web.py закрывает его в конце (close()). Программа сервиса на
+компьютере держит одно подключение до конца запуска.
 Для тестов кабинета WEB_DB_FAKE=1: вместо Postgres sqlite в памяти (схема app убирается из имён).
 """
 import os
@@ -59,10 +62,29 @@ def fake_mode():
 
 # ---------- подключение ----------
 
-def _connect_pg():
+ENV_FILE = Path(__file__).resolve().parent.parent / ".env"
+
+
+def _database_url():
+    """DATABASE_URL из окружения, иначе строка DATABASE_URL=... из .env проекта. Значение нигде не печатается."""
     url = os.environ.get("DATABASE_URL", "").strip()
+    if url:
+        return url
+    try:
+        lines = ENV_FILE.read_text(encoding="utf-8-sig").splitlines()
+    except OSError:
+        return ""
+    for line in lines:
+        key, sep, value = line.strip().partition("=")
+        if sep and key.strip() == "DATABASE_URL":
+            return value.strip().strip('"').strip("'")
+    return ""
+
+
+def _connect_pg():
+    url = _database_url()
     if not url:
-        _stop("База не подключена: скажите Claude «опубликуй сервис»")
+        _stop("База не подключена: скажите Claude «подключи базу»")
     try:
         import pg8000.native
     except ImportError:
@@ -89,7 +111,7 @@ def _connect_pg():
         )
     except Exception as e:  # сеть, пароль, база на паузе
         print(f"db: не подключилась: {type(e).__name__}: {e}", file=sys.stderr)
-        _stop("База не отвечает: попробуйте через минуту. Не прошло: скажите Claude «опубликуй сервис»")
+        _stop("База не отвечает: попробуйте через минуту. Не прошло: скажите Claude «подключи базу»")
     # Дальше запросы не дольше QUERY_TIMEOUT секунд.
     try:
         con._usock.settimeout(QUERY_TIMEOUT)
@@ -277,3 +299,34 @@ def fake_reset():
     if _fake is not None:
         _fake.close()
     _fake = None
+
+
+# ---------- проверка связи ----------
+
+def check():
+    """Связь с базой и таблицы сервиса: {"ok": True, "tables": [...]} или {"ok": False, "error": "..."}.
+    Ключ базы не печатается. Запуск из папки проекта: python lib/db.py check (на Mac python3)."""
+    try:
+        if fake_mode():
+            rows = query("select name as table_name from sqlite_master where type = 'table' order by name")
+        else:
+            rows = query("select table_name from information_schema.tables where table_schema = 'app' order by table_name")
+        return {"ok": True, "tables": [r["table_name"] for r in rows]}
+    except Exception as e:  # DbError, StopRun из web.py, сбой драйвера
+        return {"ok": False, "error": str(e)}
+    finally:
+        close()
+
+
+if __name__ == "__main__":
+    import json
+
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8")
+    if sys.argv[1:] != ["check"]:
+        print("Проверка связи с базой: python lib/db.py check", file=sys.stderr)
+        sys.exit(2)
+    result = check()
+    print(json.dumps(result, ensure_ascii=False))
+    sys.exit(0 if result["ok"] else 1)

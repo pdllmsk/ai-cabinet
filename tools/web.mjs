@@ -11,7 +11,7 @@
 //   node tools/web.mjs migrate-plan "<папка>"          для сервиса на компьютере: таблицы базы по файлам input/
 //   node tools/web.mjs verify "<папка>" [--url <адрес>] после публикации: git без ключей и данных, publish,
 //                                                      сайт отвечает, без кода 401, таблицы закрыты для Supabase API
-//   node tools/web.mjs save-account --github <login> --vercel-team <id> --supabase-org <id> [--region eu-central-1]
+//   node tools/web.mjs save-account [--github <login>] [--vercel-team <id>] [--supabase-org <id>] [--region eu-central-1]
 //                                                      учётные записи публикации в me/publikaciya.json кабинета
 //
 // --json: вывод одним объектом JSON. Коды выхода: 0 готово, 1 есть проблемы, 2 нечего делать или не тот проект.
@@ -1326,13 +1326,31 @@ export async function verifyWeb(dir, { url, env = process.env } = {}) {
 
 // ---------- учётные записи публикации ----------
 
-export function saveAccount(root, { github, vercelTeam, supabaseOrg, region = 'eu-central-1' } = {}) {
-  if (typeof github !== 'string' || !/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/.test(github)) throw webError('EARG', 'Укажите --github: логин GitHub, латинские буквы, цифры и дефис.');
-  if (typeof vercelTeam !== 'string' || !/^[A-Za-z0-9_-]{1,100}$/.test(vercelTeam)) throw webError('EARG', 'Укажите --vercel-team: код команды Vercel (team_...).');
-  if (typeof supabaseOrg !== 'string' || !/^[A-Za-z0-9_-]{1,100}$/.test(supabaseOrg)) throw webError('EARG', 'Укажите --supabase-org: код организации Supabase.');
-  if (typeof region !== 'string' || !/^[a-z]{2}-[a-z]+-\d$/.test(region)) throw webError('EARG', 'Регион после --region, например eu-central-1.');
-  const data = { github_login: github, vercel_team_id: vercelTeam, supabase_org_id: supabaseOrg, region, checked_at: new Date().toISOString() };
+// Пишет me/publikaciya.json. Можно не всё сразу: «подключи базу» записывает только организацию Supabase,
+// «подключи публикацию» потом добавит GitHub и Vercel. Не названное берётся из файла как было.
+export function saveAccount(root, { github, vercelTeam, supabaseOrg, region } = {}) {
+  const given = (v) => v !== undefined && v !== null && v !== '';
+  if (given(github) && (typeof github !== 'string' || !/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/.test(github))) throw webError('EARG', 'После --github нужен логин GitHub: латинские буквы, цифры и дефис.');
+  if (given(vercelTeam) && (typeof vercelTeam !== 'string' || !/^[A-Za-z0-9_-]{1,100}$/.test(vercelTeam))) throw webError('EARG', 'После --vercel-team нужен код команды Vercel (team_...).');
+  if (given(supabaseOrg) && (typeof supabaseOrg !== 'string' || !/^[A-Za-z0-9_-]{1,100}$/.test(supabaseOrg))) throw webError('EARG', 'После --supabase-org нужен код организации Supabase.');
+  if (given(region) && (typeof region !== 'string' || !/^[a-z]{2}-[a-z]+-\d$/.test(region))) throw webError('EARG', 'Регион после --region, например eu-central-1.');
+  if (!given(github) && !given(vercelTeam) && !given(supabaseOrg)) throw webError('EARG', 'Укажите хотя бы одно: --github, --vercel-team или --supabase-org.');
   const file = join(root, ...ACCOUNT_FILE);
+  let old = {};
+  try {
+    const cur = JSON.parse(readFileSync(file, 'utf8'));
+    if (cur && typeof cur === 'object' && !Array.isArray(cur)) old = cur;
+  } catch {
+    // файла нет или он повреждён: пишем заново
+  }
+  const keep = (v, k) => (given(v) ? v : typeof old[k] === 'string' ? old[k] : null);
+  const data = {
+    github_login: keep(github, 'github_login'),
+    vercel_team_id: keep(vercelTeam, 'vercel_team_id'),
+    supabase_org_id: keep(supabaseOrg, 'supabase_org_id'),
+    region: keep(region, 'region') ?? 'eu-central-1',
+    checked_at: new Date().toISOString(),
+  };
   mkdirSync(dirname(file), { recursive: true });
   writeFileAtomic(file, JSON.stringify(data, null, 2) + '\n');
   return data;
@@ -1349,7 +1367,7 @@ const USAGE = `Сервис для интернета:
   node tools/web.mjs status "<папка проекта>"
   node tools/web.mjs migrate-plan "<папка проекта>"
   node tools/web.mjs verify "<папка проекта>" [--url <адрес сайта>]
-  node tools/web.mjs save-account --github <логин> --vercel-team <код> --supabase-org <код> [--region eu-central-1]
+  node tools/web.mjs save-account [--github <логин>] [--vercel-team <код>] [--supabase-org <код>] [--region eu-central-1]  (не названное остаётся как было)
 Добавьте --json, чтобы получить ответ одним объектом JSON.`;
 
 export function parseArgs(argv) {
@@ -1389,13 +1407,24 @@ function needKind(dir, kinds, json) {
   return null;
 }
 
+// Ключ базы: у сервиса для интернета и у сервиса на компьютере с базой (поле db, «подключи базу»).
+function needDb(dir, json) {
+  const { service, error } = readService(dir);
+  if (error) return reply(2, json, { error }, `В папке ${dir} ${error}: это не проект сервиса.`);
+  const db = typeof service.db === 'string' && service.db.trim() !== '';
+  if (service.kind === 'web' || (['run', 'page'].includes(service.kind) && db)) return null;
+  const why = 'У сервиса нет базы (поля db в service.json): скажите «подключи базу».';
+  return reply(2, json, { error: why, kind: service.kind ?? null }, why);
+}
+
 const where = (x) => `${x.where}${x.sheet ? `, лист «${x.sheet}»` : ''}${x.table ? `, таблица ${x.table}` : ''}`;
 
 async function run(cmd, dirArg, opts, { root, cwd }) {
   const json = opts.json;
   if (cmd === 'save-account') {
-    const data = saveAccount(root, { github: opts.github, vercelTeam: opts['vercel-team'], supabaseOrg: opts['supabase-org'], region: opts.region || 'eu-central-1' });
-    return reply(0, json, { ok: true, file: ACCOUNT_FILE.join('/'), ...data }, `Записано в ${ACCOUNT_FILE.join('/')}: GitHub ${data.github_login}, Vercel ${data.vercel_team_id}, Supabase ${data.supabase_org_id}, регион ${data.region}.`);
+    const data = saveAccount(root, { github: opts.github, vercelTeam: opts['vercel-team'], supabaseOrg: opts['supabase-org'], region: opts.region });
+    const no = (v) => v ?? 'не подключён';
+    return reply(0, json, { ok: true, file: ACCOUNT_FILE.join('/'), ...data }, `Записано в ${ACCOUNT_FILE.join('/')}: GitHub ${no(data.github_login)}, Vercel ${no(data.vercel_team_id)}, Supabase ${no(data.supabase_org_id)}, регион ${data.region}.`);
   }
   const dir = projectDir(dirArg, cwd);
   if (cmd === 'check') {
@@ -1416,7 +1445,7 @@ async function run(cmd, dirArg, opts, { root, cwd }) {
     return reply(r.found.length || r.unread.length ? 1 : 0, json, r, lines);
   }
   if (cmd === 'secret') {
-    const gate = needKind(dir, ['web'], json);
+    const gate = needDb(dir, json);
     if (gate) return gate;
     const r = makeSecret(dir, { ref: opts.ref, host: opts.host, port: opts.port || 6543, rotate: opts.rotate });
     return reply(0, json, r, [

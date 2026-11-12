@@ -74,6 +74,9 @@ export const TEMPLATE_VERSION = '2026-11-12';
 export const LIB_FILES = ['llm.py', 'read_table.py', 'service_api.py', 'ui.md', 'design.md'];
 // lib сервиса для интернета: помощники сайта и базы (vendor с драйвером базы кладётся отдельно, целиком).
 export const LIB_FILES_WEB = ['web.py', 'db.py', 'web_dev.py', 'read_table.py', 'ui.md', 'design.md'];
+// Сервис на компьютере с базой (поле db в service.json, «подключи базу»): ещё помощник базы и драйвер (vendor).
+export const LIB_FILES_DB = ['db.py'];
+export const DB_DIR = 'db';
 export const KINDS = ['run', 'page', 'web'];
 // Файлы шаблона web-service, которые кладутся в проект, только если их там нет (дальше это файлы человека).
 export const WEB_START_FILES = ['api/index.py', 'public/index.html', 'db/001_init.sql', 'requirements.txt', '.python-version', 'README.md'];
@@ -310,7 +313,14 @@ export function readServiceInfo(dir) {
   } else if (kind === 'web' && pageSet) {
     p('page: у сервиса для интернета страница в папке public, поставьте "page": null');
   }
-  const info = { name: name || basename(dir), about: typeof data.about === 'string' ? data.about.trim() : '', kind, run, result, input: data.input ?? null, page, api };
+  // База сервиса (Supabase): папка db/ с файлами таблиц. У сервиса на компьютере появляется после «подключи базу».
+  let db = false;
+  if (data.db !== undefined && data.db !== null && data.db !== '') {
+    const parts = relParts(data.db);
+    if (!parts || parts.length !== 1 || parts[0] !== DB_DIR) p(`db: папка таблиц базы "${DB_DIR}/" внутри проекта`);
+    else db = true;
+  }
+  const info = { name: name || basename(dir), about: typeof data.about === 'string' ? data.about.trim() : '', kind, run, result, input: data.input ?? null, page, api, db };
   if (kind === 'web') info.publish = publishOf(data.publish);
   return { info, problems };
 }
@@ -428,6 +438,8 @@ export function checkProject(root, dirArg, { cwd = process.cwd() } = {}) {
       const stem = e.split('.')[0];
       if (['llm', 'read_table', 'service_api'].includes(stem)) {
         problems.push(`${e} в корне проекта: модули llm, read_table и service_api только из lib (их кладёт кабинет), переименуйте`);
+      } else if (info?.db && info.kind !== 'web' && /^db\.py$/i.test(e)) {
+        problems.push(`${e} в корне проекта: модуль db только из lib (его кладёт кабинет), переименуйте`);
       } else if (/\.(pyc|pyd|so)$/i.test(e)) {
         problems.push(`${e} в корне проекта: готовые модули Python не проверить, уберите`);
       }
@@ -513,7 +525,8 @@ export function checkProject(root, dirArg, { cwd = process.cwd() } = {}) {
       }
       texts.push({ file: f, text });
     }
-    const allow = [...used];
+    // Помощник базы lib/db.py: только у сервиса с базой («подключи базу»).
+    const allow = info?.db ? [...used, 'db'] : [...used];
     for (const { file, text } of texts) {
       for (const x of programProblems(text, { allowImports: allow })) program.push({ file: relOf(dir, file), line: x.line, text: x.text, why: projectWhy(x.why) });
     }
@@ -532,11 +545,19 @@ export const okCheck = (c) => c.problems.length === 0 && c.program.length === 0;
 
 // Вид сервиса из service.json без проверок (для выбора lib и шаблона): 'run', 'page', 'web' или null.
 function kindOf(dir) {
+  return serviceDataOf(dir).kind;
+}
+
+// Есть ли у сервиса база: поле db в service.json (у вида web оно есть в шаблоне).
+export const hasDb = (data) => isObj(data) && typeof data.db === 'string' && data.db.trim() !== '';
+
+// { kind, db } из service.json без проверок.
+function serviceDataOf(dir) {
   try {
     const data = readJson(join(dir, SERVICE_FILE));
-    return isObj(data) && KINDS.includes(data.kind) ? data.kind : null;
+    return { kind: isObj(data) && KINDS.includes(data.kind) ? data.kind : null, db: hasDb(data) };
   } catch {
-    return null;
+    return { kind: null, db: false };
   }
 }
 
@@ -550,7 +571,7 @@ export function syncLib(root, dir, { kind } = {}) {
     throw serviceError('ELIB', 'Папка lib в проекте не обычная папка: кабинет не кладёт туда llm.py и read_table.py.');
   }
   mkdirSync(lib, { recursive: true });
-  const names = (kind ?? kindOf(dir)) === 'web' ? LIB_FILES_WEB : LIB_FILES;
+  const names = (kind ?? kindOf(dir)) === 'web' ? LIB_FILES_WEB : serviceDataOf(dir).db ? [...LIB_FILES, ...LIB_FILES_DB] : LIB_FILES;
   const updated = [];
   for (const name of names) {
     const src = join(root, 'tools', name);
@@ -1178,10 +1199,8 @@ export function addService(root, dirArg, { cwd = process.cwd() } = {}) {
   const { list, error, broken } = readRegistry(root);
   if (broken) throw serviceError('EREGISTRY', `Реестр сервисов не читается: ${error}. Покажите это тренеру.`);
   syncLib(root, c.dir, { kind: c.info.kind });
-  if (c.info.kind === 'web') {
-    syncVendor(root, c.dir);
-    syncPublicUi(root, c.dir);
-  }
+  if (c.info.kind === 'web' || c.info.db) syncVendor(root, c.dir);
+  if (c.info.kind === 'web') syncPublicUi(root, c.dir);
   const now = new Date().toISOString();
   const old = list.find((e) => samePath(e.path, c.dir));
   let entry;
@@ -1431,6 +1450,19 @@ export function upgradeProject(root, dirArg, { cwd = process.cwd() } = {}) {
   step(() => changed.push(...upgradeGit(dir)));
   // 2. lib (у web ещё драйвер базы и набор интерфейса).
   step(() => changed.push(...syncLib(root, dir, { kind }).map((n) => `lib/${n}`)));
+  if (!web && hasDb(data)) {
+    // Сервис на компьютере с базой («подключи базу»): драйвер и первый файл таблиц, если таблиц ещё нет.
+    step(() => {
+      if (syncVendor(root, dir)) changed.push('lib/vendor');
+    });
+    step(() => {
+      const src = join(root, ...TEMPLATE_WEB, DB_DIR, '001_init.sql');
+      if (!isFile(src) || hasSql(join(dir, DB_DIR))) return;
+      mkdirSync(join(dir, DB_DIR), { recursive: true });
+      copyFileSync(src, join(dir, DB_DIR, '001_init.sql'), constants.COPYFILE_EXCL);
+      changed.push(`${DB_DIR}/001_init.sql`);
+    });
+  }
   if (web) {
     step(() => {
       if (syncVendor(root, dir)) changed.push('lib/vendor');

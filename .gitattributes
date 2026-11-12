@@ -1,2 +1,5 @@
 *.cmd text eol=crlf
 *.command text eol=lf
+*.sh text eol=lf
+templates/user-skills/superpowers-*/scripts/* text eol=lf
+templates/user-skills/superpowers-*/**/scripts/* text eol=lf

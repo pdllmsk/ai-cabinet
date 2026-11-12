@@ -210,7 +210,8 @@ if __name__ == "__main__":
         print(e, file=sys.stderr)
         sys.exit(e.code)
     except Exception as e:
-        if read_table is not None and isinstance(e, read_table.UserError):
+        # Понятная причина от помощников lib: таблица не читается или база не отвечает (DbError из lib/db.py).
+        if (read_table is not None and isinstance(e, read_table.UserError)) or type(e).__name__ == "DbError":
             print(e, file=sys.stderr)
             sys.exit(2)
         print(f"Сбой программы сервиса ({where_failed(e)}): {type(e).__name__}: {e}. "

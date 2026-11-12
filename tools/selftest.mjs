@@ -637,6 +637,11 @@ export async function selftest({ keep = false } = {}) {
     const skills = report?.skills;
     if (skills && !skills.error && existsSync(join(env.CLAUDE_CONFIG_DIR, 'skills', 'kabinet-novyi-servis', 'SKILL.md'))) ok('Скиллы «новый сервис» и «добавь в кабинет» ставятся');
     else fail('Скиллы «новый сервис» и «добавь в кабинет» не ставятся', skills?.error ?? lastLine(init.out));
+    const spDir = join(cab, 'templates', 'user-skills');
+    const sp = existsSync(spDir) ? readdirSync(spDir).filter((n) => n.startsWith('superpowers-')) : [];
+    const spMissing = sp.filter((n) => !existsSync(join(env.CLAUDE_CONFIG_DIR, 'skills', n, 'SKILL.md')));
+    if (sp.length === 14 && !spMissing.length) ok('Скиллы superpowers ставятся', `${sp.length} шт.`);
+    else fail('Скиллы superpowers не ставятся', spMissing.length ? spMissing.join(', ') : `в шаблоне ${sp.length} из 14`);
 
     const demo = run(py, [join(cab, 'tools', 'analiz.py'), 'demo'], { cwd: cab, env });
     if (demo.code === 0 && existsSync(join(cab, 'output', 'analiz', 'history.json'))) ok('«Покажи пример сервиса»: готовый ответ «Аналитики таблиц»', lastLine(demo.out));

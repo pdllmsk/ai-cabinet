@@ -2,9 +2,9 @@
 // Новый файл в MANIFEST (как страница сервиса «Аналитика таблиц» site/analiz.html) появляется в уже поставленном
 // кабинете при «обнови кабинет» (update.mjs запускает init) или при следующем запуске страницы (serve.mjs).
 //
-// Ещё init ставит пользовательские скиллы курса (templates/user-skills/kabinet-*) в папку скиллов Claude Code
+// Ещё init ставит пользовательские скиллы курса (templates/user-skills/kabinet-* и набор superpowers-*) в папку скиллов Claude Code
 // (~/.claude/skills, на Windows %USERPROFILE%\.claude\skills): они работают в любой папке, например в проекте
-// сервиса («новый сервис», «добавь в кабинет»). Только папки с префиксом kabinet-: свои обновляем, чужие не
+// сервиса («новый сервис», «добавь в кабинет»). Только папки с префиксом kabinet- или superpowers-: свои обновляем, чужие не
 // трогаем. В SKILL.md вместо {{KABINET}} подставляется путь к этому кабинету. Их же ставят update.mjs (после
 // обновления) и check.mjs (проверка сетапа на первом занятии).
 //
@@ -16,7 +16,7 @@
 // --json: только список созданных файлов в JSON (его читали прежние версии update.mjs), скиллы ставятся молча.
 // --report: {"created": [...], "skills": {...}, "services": {message, results}, "pushguard": {status, message}}
 // в JSON (его читает update.mjs).
-import { constants, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { chmodSync, constants, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -49,7 +49,9 @@ export function ensureParticipantFiles(root) {
 }
 
 export const USER_SKILLS_FROM = 'templates/user-skills';
-export const USER_SKILL_RE = /^kabinet-[a-z0-9-]+$/;
+// superpowers-*: копия скиллов плагина superpowers (MIT, github.com/obra/superpowers) без автозапуска, с приставкой
+// в имени, чтобы не задеть свои скиллы человека.
+export const USER_SKILL_RE = /^(kabinet|superpowers)-[a-z0-9-]+$/;
 const PLACEHOLDER = '{{KABINET}}';
 const TEXT_EXT = /\.(md|txt|json)$/i;
 
@@ -78,7 +80,7 @@ const readOrNull = (p) => {
   }
 };
 
-// Ставит или обновляет скиллы kabinet-* из templates/user-skills. Возвращает
+// Ставит или обновляет скиллы kabinet-* и superpowers-* из templates/user-skills. Возвращает
 // { status: 'installed' | 'updated' | 'same' | 'none' | 'off' | 'error', dir, installed, updated, error, message }.
 // installed: скиллов не было, updated: были и изменились, same: всё уже как в кабинете.
 export function installUserSkills(root, { env = process.env, home = homedir() } = {}) {
@@ -114,6 +116,8 @@ export function installUserSkills(root, { env = process.env, home = homedir() } 
         if (old && old.equals(data)) continue;
         mkdirSync(dirname(dst), { recursive: true });
         writeFileSync(dst, data);
+        // Права на запуск (скрипты superpowers) как в шаблоне; на Windows ничего не меняет.
+        chmodSync(dst, statSync(join(src, name, rel)).mode & 0o777);
         changed = true;
       }
       if (!had) installed.push(name);
@@ -127,7 +131,7 @@ export function installUserSkills(root, { env = process.env, home = homedir() } 
 }
 
 // Одна строка человеку.
-export const SKILL_PHRASES = '«новый сервис», «добавь в кабинет», «подключи публикацию» и «опубликуй сервис»';
+export const SKILL_PHRASES = '«новый сервис», «добавь в кабинет», «подключи публикацию», «опубликуй сервис» и набор superpowers';
 
 export function skillsMessage({ status, dir, error }) {
   const what = `Скиллы ${SKILL_PHRASES}`;

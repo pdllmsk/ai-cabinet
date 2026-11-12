@@ -594,6 +594,36 @@ test('upgrade: без «Уроков» правила как в шаблоне; 
   if (hasGit) assert.equal(gitOut(dir, 'rev-list', '--count', 'HEAD'), '1');
 });
 
+test('«подключи базу» у сервиса на компьютере: upgrade кладёт db.py, драйвер и db/001_init.sql; import db только с полем db', () => {
+  const { c, svcHome } = freshCabinet('upg-db');
+  const prog = 'import sys\nfrom pathlib import Path\nsys.path.insert(0, str(Path(__file__).resolve().parent / "lib"))\nfrom db import query\n';
+  const dir = oldProject(svcHome, 'zayavki', OLD_RUN, { 'main.py': prog });
+  // Без поля db: помощника базы нет, import db не из списка.
+  assert.equal(upgradeProject(c, dir).error, undefined);
+  assert.ok(!existsSync(join(dir, 'lib', 'db.py')));
+  assert.ok(!existsSync(join(dir, 'lib', 'vendor')));
+  assert.ok(checkProject(c, dir).program.some((x) => x.file === 'main.py' && /библиотека не из списка/.test(x.why)));
+  // Поле db: помощник, драйвер и первый файл таблиц из шаблона сервиса для интернета.
+  writeFileSync(join(dir, 'service.json'), JSON.stringify({ ...OLD_RUN, db: 'db/' }, null, 2));
+  const r = upgradeProject(c, dir);
+  assert.equal(r.error, undefined);
+  for (const x of ['lib/db.py', 'lib/vendor', 'db/001_init.sql']) assert.ok(r.changed.includes(x), `${x} в ${r.changed}`);
+  assert.ok(existsSync(join(dir, 'lib', 'vendor', 'pg8000')));
+  const chk = checkProject(c, dir);
+  assert.deepEqual(chk.program, []);
+  assert.deepEqual(chk.problems, []);
+  assert.equal(chk.info.db, true);
+  // Свои таблицы человека повтор не трогает; свой db.py в корне перекрыл бы помощника.
+  writeFileSync(join(dir, 'db', '001_init.sql'), '-- моё\n');
+  upgradeProject(c, dir);
+  assert.equal(readFileSync(join(dir, 'db', '001_init.sql'), 'utf8'), '-- моё\n');
+  writeFileSync(join(dir, 'db.py'), '');
+  assert.ok(checkProject(c, dir).problems.some((p) => p.startsWith('db.py в корне проекта')));
+  // db не туда: замечание к service.json.
+  writeFileSync(join(dir, 'service.json'), JSON.stringify({ ...OLD_RUN, db: 'dannye/' }, null, 2));
+  assert.ok(checkProject(c, dir).problems.some((p) => p.startsWith('service.json: db:')));
+});
+
 test('upgrade: идёт расчёт → сервис пропущен, обновится в следующий раз', () => {
   const { c, svcHome } = freshCabinet('upg-3');
   const dir = oldProject(svcHome, 'schitaetsya', OLD_RUN, { 'CLAUDE.md': '# Старые\n', 'main.py': MAIN_PY(), 'output/.gitkeep': '' });

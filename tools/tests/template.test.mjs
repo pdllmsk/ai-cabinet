@@ -230,7 +230,7 @@ test('скиллы процессов: фразы человеку без сло
   const words = /(^|[^а-яё])(скрипт|порт|сервер|терминал|консол|в фоне)/i;
   for (const f of ['.claude/skills/add-process/SKILL.md', '.claude/skills/run-process/SKILL.md', '.claude/skills/demo-process/SKILL.md',
     `${USER_SKILLS}kabinet-novyi-servis/SKILL.md`, `${USER_SKILLS}kabinet-dobav-v-kabinet/SKILL.md`, 'templates/service-project/CLAUDE.md', 'templates/service-project/README.md',
-    `${USER_SKILLS}kabinet-podkluchi-publikaciyu/SKILL.md`, `${USER_SKILLS}kabinet-opublikuy/SKILL.md`, 'templates/web-service/CLAUDE.md']) {
+    `${USER_SKILLS}kabinet-podkluchi-publikaciyu/SKILL.md`, `${USER_SKILLS}kabinet-opublikuy/SKILL.md`, `${USER_SKILLS}kabinet-podkluchi-bazu/SKILL.md`, 'templates/web-service/CLAUDE.md']) {
     const bad = quotes(read(f)).filter((q) => words.test(q) && !/^(скрипт|код|сервер|порт|терминал|консоль|в фоне)$/.test(q.trim()));
     assert.deepEqual(bad, [], f);
   }
@@ -371,6 +371,23 @@ test('скиллы kabinet-*: фразы, команды кабинета в к�
   assert.match(rules, /\| «новый сервис», «создай сервис» \|[^\n]*kabinet-novyi-servis/);
   assert.ok(rules.includes('## Сервисы-проекты') && rules.includes('templates/user-skills/kabinet-novyi-servis/SKILL.md'));
   assert.ok(read('START.md').includes('**новый сервис**'));
+});
+
+test('скилл kabinet-podkluchi-bazu: фразы, поиск кабинета, коннектор в этом разговоре, предупреждение о личных данных, правила', () => {
+  const baza = read(`${USER_SKILLS}kabinet-podkluchi-bazu/SKILL.md`);
+  assert.match(baza.split('\n---')[0], /«подключи базу», «нужна база»/);
+  for (const must of ['{{KABINET}}', 'AI_CABINET_DIR', "'Documents','ai-cabinet'", "'Документы','ai-cabinet'", '**Allow** (разрешить)', 'Cannot find module',
+    'node "<кабинет>/tools/web.mjs" status "<проект>" --json', 'node "<кабинет>/tools/web.mjs" pii "<проект>" --json',
+    'node "<кабинет>/tools/web.mjs" save-account --supabase-org <id>', 'node "<кабинет>/tools/services.mjs" upgrade "<проект>"',
+    'node "<кабинет>/tools/web.mjs" secret "<проект>"', 'python lib/db.py check', 'session_connectors_status', 'set_session_connector_enabled',
+    'list_organizations', 'get_cost', 'create_project', 'confirm_cost', 'execute_sql', 'list_migrations', 'apply_migration', '"db": "db/"', 'Продолжаем?']) {
+    assert.ok(baza.includes(must), must);
+  }
+  const rules = read('CLAUDE.md');
+  assert.match(rules, /\| «подключи базу», «нужна база» о сервисе \|[^\n]*kabinet-podkluchi-bazu/);
+  const proj = read('templates/service-project/CLAUDE.md');
+  assert.ok(proj.includes('## База') && proj.includes('kabinet-podkluchi-bazu') && proj.includes('from db import query'));
+  assert.ok(read('templates/web-service/CLAUDE.md').includes('kabinet-podkluchi-bazu'));
 });
 
 // Правила понятной страницы и карточки: один файл курса, на него ссылаются правила проекта сервиса и скиллы процессов.

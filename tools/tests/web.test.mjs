@@ -380,6 +380,39 @@ test('save-account пишет me/publikaciya.json кабинета', () => {
   assert.throws(() => saveAccount(cab, { github: 'bad login', vercelTeam: 'x', supabaseOrg: 'y' }));
 });
 
+test('save-account: «подключи базу» пишет только Supabase, «подключи публикацию» потом дописывает остальное', async () => {
+  const cab = join(base, 'Айгуль Н', `ai-cabinet-${++n}`);
+  mkdirSync(cab, { recursive: true });
+  const r = await main(['save-account', '--supabase-org', 'uqjajvttsouimsktxwxd', '--json'], { root: cab, cwd: base });
+  assert.equal(r.code, 0, r.text);
+  let saved = JSON.parse(readFileSync(join(cab, 'me', 'publikaciya.json'), 'utf8'));
+  assert.equal(saved.supabase_org_id, 'uqjajvttsouimsktxwxd');
+  assert.equal(saved.github_login, null);
+  assert.equal(saved.vercel_team_id, null);
+  assert.equal(saved.region, 'eu-central-1');
+  saveAccount(cab, { github: 'aigul-n', vercelTeam: 'team_e4Y8abc', region: 'eu-west-1' });
+  saved = JSON.parse(readFileSync(join(cab, 'me', 'publikaciya.json'), 'utf8'));
+  assert.deepEqual([saved.github_login, saved.vercel_team_id, saved.supabase_org_id, saved.region], ['aigul-n', 'team_e4Y8abc', 'uqjajvttsouimsktxwxd', 'eu-west-1']);
+  // Ничего не названо: ошибка, файл как был.
+  const none = await main(['save-account', '--json'], { root: cab, cwd: base });
+  assert.equal(none.code, 2);
+  assert.equal(JSON.parse(readFileSync(join(cab, 'me', 'publikaciya.json'), 'utf8')).github_login, 'aigul-n');
+});
+
+test('secret: у сервиса на компьютере только после «подключи базу» (поле db)', async () => {
+  const dir = join(home, `lokalny-${++n}`);
+  copyDir(join(ROOT, 'templates', 'service-project'), dir);
+  const no = await run(['secret', dir, '--ref', REF, '--host', HOST, '--json']);
+  assert.equal(no.code, 2);
+  assert.match(JSON.parse(no.text).error, /подключи базу/);
+  const svc = JSON.parse(readFileSync(join(dir, 'service.json'), 'utf8'));
+  svc.db = 'db/';
+  writeFileSync(join(dir, 'service.json'), JSON.stringify(svc));
+  const ok = await run(['secret', dir, '--ref', REF, '--host', HOST, '--json']);
+  assert.equal(ok.code, 0, ok.text);
+  assert.ok(readEnv(dir).get('DATABASE_URL').includes(`@${HOST}:6543/`));
+});
+
 // ---------- migrate-plan ----------
 
 test('migrate-plan: таблица по выгрузке продаж со столбцами и типами', async () => {

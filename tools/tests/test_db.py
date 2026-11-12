@@ -6,6 +6,7 @@ Postgres не нужен: подключение подменяется запи
 
 import os
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -102,9 +103,15 @@ class DbConnectTest(unittest.TestCase):
         self.env = dict(os.environ)
         os.environ.pop("WEB_DB_FAKE", None)
         db.close()
+        # .env проекта: во временной папке, а не рядом с tools/ (там может лежать .env кабинета).
+        self.tmp = tempfile.TemporaryDirectory()
+        self._env_file = db.ENV_FILE
+        db.ENV_FILE = Path(self.tmp.name) / ".env"
 
     def tearDown(self):
         db.close()
+        db.ENV_FILE = self._env_file
+        self.tmp.cleanup()
         os.environ.clear()
         os.environ.update(self.env)
 
@@ -112,7 +119,21 @@ class DbConnectTest(unittest.TestCase):
         os.environ.pop("DATABASE_URL", None)
         with self.assertRaises(web.StopRun) as e:
             db.query("select 1")
-        self.assertIn("опубликуй сервис", str(e.exception))
+        self.assertIn("подключи базу", str(e.exception))
+
+    def test_ключ_из_env_проекта_для_кнопки_запустить(self):
+        os.environ.pop("DATABASE_URL", None)
+        db.ENV_FILE.write_text('﻿# ключи\nDRUGOY=1\nDATABASE_URL="postgresql://u.ref:p@h:6543/postgres"\n', encoding="utf-8")
+        self.assertEqual(db._database_url(), "postgresql://u.ref:p@h:6543/postgres")
+        # Переменная окружения главнее файла (так на Vercel и в web_dev).
+        os.environ["DATABASE_URL"] = "postgresql://env:p@h:6543/postgres"
+        self.assertEqual(db._database_url(), "postgresql://env:p@h:6543/postgres")
+
+    def test_проверка_связи_без_ключа(self):
+        os.environ.pop("DATABASE_URL", None)
+        r = db.check()
+        self.assertFalse(r["ok"])
+        self.assertIn("подключи базу", r["error"])
 
     def test_адрес_разбирается(self):
         import pg8000.native
@@ -167,6 +188,9 @@ class DbFakeTest(unittest.TestCase):
                 db.execute("delete from app.zapisi")
                 raise RuntimeError("откат")
         self.assertEqual(len(db.query("select id from app.zapisi")), 3)
+
+    def test_проверка_связи_называет_таблицы(self):
+        self.assertEqual(db.check(), {"ok": True, "tables": ["zapisi"]})
 
 
 if __name__ == "__main__":
