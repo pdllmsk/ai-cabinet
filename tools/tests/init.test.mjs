@@ -5,7 +5,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { MANIFEST, USER_SKILL_RE, ensureParticipantFiles, installUserSkills, userSkillsDir } from '../init.mjs';
+import { MANIFEST, RETIRED_USER_SKILLS, USER_SKILL_RE, ensureParticipantFiles, installUserSkills, userSkillsDir } from '../init.mjs';
 import { copyDir } from './copy-dir.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -131,9 +131,17 @@ test('скиллы: ставятся с путём к кабинету, повт
     writeFileSync(join(target, 'moy-skill', 'SKILL.md'), 'мой скилл');
     mkdirSync(join(dir, 'templates', 'user-skills', 'chuzhoy'), { recursive: true });
     writeFileSync(join(dir, 'templates', 'user-skills', 'chuzhoy', 'SKILL.md'), 'не курса');
+    // Скилл, который курс ставил раньше, удаляется вместе с вложенными папками; похожее имя человека остаётся.
+    mkdirSync(join(target, RETIRED_USER_SKILLS[0], 'scripts'), { recursive: true });
+    writeFileSync(join(target, RETIRED_USER_SKILLS[0], 'scripts', 'helper.js'), 'старый');
+    mkdirSync(join(target, 'superpowers-moy'), { recursive: true });
+    writeFileSync(join(target, 'superpowers-moy', 'SKILL.md'), 'мой');
 
     let r = installUserSkills(dir, { env, home });
     assert.equal(r.status, 'installed');
+    assert.deepEqual(r.removed, [RETIRED_USER_SKILLS[0]]);
+    assert.ok(!existsSync(join(target, RETIRED_USER_SKILLS[0])));
+    assert.equal(readFileSync(join(target, 'superpowers-moy', 'SKILL.md'), 'utf8'), 'мой');
     assert.equal(r.dir, target);
     assert.deepEqual(r.installed, SKILLS);
     assert.match(r.message, /^Скиллы «новый сервис», «добавь в кабинет», «подключи публикацию» и «опубликуй сервис» поставлены/);
@@ -148,7 +156,7 @@ test('скиллы: ставятся с путём к кабинету, повт
 
     r = installUserSkills(dir, { env, home });
     assert.equal(r.status, 'same');
-    assert.deepEqual([r.installed, r.updated], [[], []]);
+    assert.deepEqual([r.installed, r.updated, r.removed], [[], [], []]);
 
     writeFileSync(join(target, SKILLS[0], 'SKILL.md'), 'старая версия');
     r = installUserSkills(dir, { env, home });

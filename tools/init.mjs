@@ -2,10 +2,10 @@
 // Новый файл в MANIFEST (как страница сервиса «Аналитика таблиц» site/analiz.html) появляется в уже поставленном
 // кабинете при «обнови кабинет» (update.mjs запускает init) или при следующем запуске страницы (serve.mjs).
 //
-// Ещё init ставит пользовательские скиллы курса (templates/user-skills/kabinet-* и набор superpowers-*) в папку скиллов Claude Code
+// Ещё init ставит пользовательские скиллы курса (templates/user-skills/kabinet-*) в папку скиллов Claude Code
 // (~/.claude/skills, на Windows %USERPROFILE%\.claude\skills): они работают в любой папке, например в проекте
-// сервиса («новый сервис», «добавь в кабинет»). Только папки с префиксом kabinet- или superpowers-: свои обновляем, чужие не
-// трогаем. В SKILL.md вместо {{KABINET}} подставляется путь к этому кабинету. Их же ставят update.mjs (после
+// сервиса («новый сервис», «добавь в кабинет»). Только папки с префиксом kabinet-: свои обновляем, чужие не
+// трогаем. Скиллы, которые курс больше не ставит (RETIRED_USER_SKILLS), удаляем. В SKILL.md вместо {{KABINET}} подставляется путь к этому кабинету. Их же ставят update.mjs (после
 // обновления) и check.mjs (проверка сетапа на первом занятии).
 //
 // После скиллов init обновляет проекты сервисов по новой версии кабинета (services.mjs upgradeAll: правила с
@@ -16,7 +16,7 @@
 // --json: только список созданных файлов в JSON (его читали прежние версии update.mjs), скиллы ставятся молча.
 // --report: {"created": [...], "skills": {...}, "services": {message, results}, "pushguard": {status, message}}
 // в JSON (его читает update.mjs).
-import { chmodSync, constants, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
+import { constants, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -49,9 +49,25 @@ export function ensureParticipantFiles(root) {
 }
 
 export const USER_SKILLS_FROM = 'templates/user-skills';
-// superpowers-*: копия скиллов плагина superpowers (MIT, github.com/obra/superpowers) без автозапуска, с приставкой
-// в имени, чтобы не задеть свои скиллы человека.
-export const USER_SKILL_RE = /^(kabinet|superpowers)-[a-z0-9-]+$/;
+export const USER_SKILL_RE = /^kabinet-[a-z0-9-]+$/;
+// Скиллы, которые курс ставил раньше и больше не ставит: installUserSkills удаляет их из папки скиллов Claude.
+// Только по точному списку имён: свои скиллы человека с похожим именем не трогаем.
+export const RETIRED_USER_SKILLS = [
+  'superpowers-brainstorming',
+  'superpowers-dispatching-parallel-agents',
+  'superpowers-executing-plans',
+  'superpowers-finishing-a-development-branch',
+  'superpowers-receiving-code-review',
+  'superpowers-requesting-code-review',
+  'superpowers-subagent-driven-development',
+  'superpowers-systematic-debugging',
+  'superpowers-test-driven-development',
+  'superpowers-using-git-worktrees',
+  'superpowers-using-superpowers',
+  'superpowers-verification-before-completion',
+  'superpowers-writing-plans',
+  'superpowers-writing-skills',
+];
 const PLACEHOLDER = '{{KABINET}}';
 const TEXT_EXT = /\.(md|txt|json)$/i;
 
@@ -80,16 +96,27 @@ const readOrNull = (p) => {
   }
 };
 
-// Ставит или обновляет скиллы kabinet-* и superpowers-* из templates/user-skills. Возвращает
-// { status: 'installed' | 'updated' | 'same' | 'none' | 'off' | 'error', dir, installed, updated, error, message }.
+// Ставит или обновляет скиллы kabinet-* из templates/user-skills и удаляет RETIRED_USER_SKILLS. Возвращает
+// { status: 'installed' | 'updated' | 'same' | 'none' | 'off' | 'error', dir, installed, updated, removed, error, message }.
 // installed: скиллов не было, updated: были и изменились, same: всё уже как в кабинете.
 export function installUserSkills(root, { env = process.env, home = homedir() } = {}) {
   const dir = userSkillsDir(env, home);
+  const removed = [];
   const result = (status, extra = {}) => {
-    const r = { status, dir, installed: [], updated: [], error: null, ...extra };
+    const r = { status, dir, installed: [], updated: [], removed, error: null, ...extra };
     return { ...r, message: skillsMessage(r) };
   };
   if (env.AI_CABINET_NO_USER_SKILLS === '1') return result('off');
+  for (const name of RETIRED_USER_SKILLS) {
+    const p = join(dir, name);
+    if (!existsSync(p)) continue;
+    try {
+      rmSync(p, { recursive: true, force: true });
+      removed.push(name);
+    } catch {
+      // Не удалилось (папка занята): удалим при следующей установке, ставить свои скиллы это не мешает.
+    }
+  }
   const src = join(root, USER_SKILLS_FROM);
   let names;
   try {
@@ -116,8 +143,6 @@ export function installUserSkills(root, { env = process.env, home = homedir() } 
         if (old && old.equals(data)) continue;
         mkdirSync(dirname(dst), { recursive: true });
         writeFileSync(dst, data);
-        // Права на запуск (скрипты superpowers) как в шаблоне; на Windows ничего не меняет.
-        chmodSync(dst, statSync(join(src, name, rel)).mode & 0o777);
         changed = true;
       }
       if (!had) installed.push(name);
@@ -131,7 +156,7 @@ export function installUserSkills(root, { env = process.env, home = homedir() } 
 }
 
 // Одна строка человеку.
-export const SKILL_PHRASES = '«новый сервис», «добавь в кабинет», «подключи публикацию», «опубликуй сервис» и набор superpowers';
+export const SKILL_PHRASES = '«новый сервис», «добавь в кабинет», «подключи публикацию» и «опубликуй сервис»';
 
 export function skillsMessage({ status, dir, error }) {
   const what = `Скиллы ${SKILL_PHRASES}`;
