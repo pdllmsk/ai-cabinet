@@ -10,6 +10,7 @@ import { basename, extname, join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isMain } from './is-main.mjs';
 import { ensureParticipantFiles } from './init.mjs';
+import { ensurePushGuard } from './pushguard.mjs';
 import { BRAND_EXT, findBrandDir } from './brand.mjs';
 import { SLUG_RE, hasProcess, isInside, listProcesses, processStatus, startRun } from './processes.mjs';
 import { ANALIZ, EXCEL_NAME_RE, createAnalizApi } from './analiz-api.mjs';
@@ -423,6 +424,8 @@ async function main() {
   } catch (e) {
     console.error(`Не удалось создать файлы кабинета из шаблонов (${e.code ?? e.message}).`);
   }
+  // Кабинет курса не публикуется: блок пуша в шаблон (молча, повторно ничего не меняет).
+  ensurePushGuard(root);
   // Файл с токеном от прошлых версий кабинета больше не нужен: токен живёт только в памяти.
   try {
     rmSync(resolve(root, 'me', 'page-token.txt'), { force: true });

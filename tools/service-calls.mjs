@@ -140,6 +140,7 @@ export function createServiceCalls(root, { python, timeoutMs = API_TIMEOUT_MS, s
     } catch {
       return fail(404, 'ENOSERVICE', 'Папка сервиса не найдена.');
     }
+    if (c.info?.kind === 'web') return fail(404, 'EWEB', 'У сервиса для интернета действия работают на его сайте, а не в кабинете.');
     if (!c.info?.api) return fail(404, 'ENOAPI', 'У сервиса нет серверной части: в service.json нет поля api.');
     if (!okCheck(c)) return fail(400, 'EBADSERVICE', `Серверная часть не запускается, в проекте есть что поправить: ${problemLines(c).map((l) => l.trim()).join('; ')}`);
     if (!c.apiFile) return fail(400, 'EBADSERVICE', 'Серверная часть сервиса не найдена.');

@@ -2,12 +2,19 @@
 // и git. Кабинет их показывает и запускает: реестр me/servisy.json, карточка на странице «мой кабинет».
 // Без зависимостей. Договор: active/program/plans/2026-10-30-servisy-proekty.md.
 //
-//   node tools/services.mjs new <название> [--dir <папка сервисов>]   новый проект из templates/service-project
+//   node tools/services.mjs new <название> [--kind run|web] [--dir <папка сервисов>]
+//                                            новый проект из templates/service-project (web: templates/web-service)
 //   node tools/services.mjs check <папка>    service.json и программа по правилам кабинета
 //   node tools/services.mjs run <папка|имя>  запуск программы, как кнопкой «Запустить» на карточке
 //   node tools/services.mjs add <папка>      проверка и запись в реестр кабинета (повторно: обновление)
 //   node tools/services.mjs remove <имя>     убрать из кабинета (папку проекта не трогает)
 //   node tools/services.mjs list             сервисы кабинета, результат и последний запуск
+//   node tools/services.mjs upgrade <папка>  правила, настройки, lib и git проекта по новой версии кабинета
+//   node tools/services.mjs upgrade-all      то же для всех сервисов (реестр и папка «Сервисы»), его зовёт init.mjs
+//
+// Вид web (сервис для коллег по ссылке в интернете): программы для кнопки «Запустить» нет, действия в api/index.py,
+// сайт в public/. Кабинет показывает его карточкой со своей страницей (tools/web-card.html) и проверяет
+// проверкой tools/web.mjs (checkWebProject).
 //
 // Запуск: python <run> из папки проекта, свой Python кабинета (абсолютный путь вне кабинета и проекта), без
 // оболочки, PYTHONPATH = <проект>/lib, UTF-8, не дольше 5 минут, замок <проект>/output/.running от двойного
@@ -52,15 +59,24 @@ import {
   validateResult,
 } from './processes.mjs';
 import { appendJournal, folderSnapshot, journalFile, snapshotDiff } from './journal.mjs';
+import { findBrandDir } from './brand.mjs';
+import { checkWebProject } from './web.mjs';
 
 export const SERVICE_FILE = 'service.json';
 export const REGISTRY = ['me', 'servisy.json'];
 export const SERVICES_DIR_NAME = 'Сервисы';
 export const TEMPLATE = ['templates', 'service-project'];
+export const TEMPLATE_WEB = ['templates', 'web-service'];
+// Версия шаблона проекта: upgrade пишет её в service.json (template_version).
+export const TEMPLATE_VERSION = '2026-11-12';
 // ui.md: каталог набора интерфейса (tools/ui) для своей страницы сервиса, его читает Claude в проекте.
 // design.md: правила понятной страницы и карточки, их читает Claude в проекте.
 export const LIB_FILES = ['llm.py', 'read_table.py', 'service_api.py', 'ui.md', 'design.md'];
-export const KINDS = ['run', 'page'];
+// lib сервиса для интернета: помощники сайта и базы (vendor с драйвером базы кладётся отдельно, целиком).
+export const LIB_FILES_WEB = ['web.py', 'db.py', 'web_dev.py', 'read_table.py', 'ui.md', 'design.md'];
+export const KINDS = ['run', 'page', 'web'];
+// Файлы шаблона web-service, которые кладутся в проект, только если их там нет (дальше это файлы человека).
+export const WEB_START_FILES = ['api/index.py', 'public/index.html', 'db/001_init.sql', 'requirements.txt', '.python-version', 'README.md'];
 export const PAGE_DIR = 'page';
 export const OUTPUT_DIR = 'output';
 // Что кабинет отдаёт статикой по адресу s/<slug>/: из page только эти виды, из output только эти.
@@ -248,9 +264,11 @@ export function readServiceInfo(dir) {
   else if (name.length > NAME_MAX) p(`name: название не длиннее ${NAME_MAX} знаков`);
   if (data.about !== undefined && data.about !== null && typeof data.about !== 'string') p('about: нужно описание строкой');
   const kind = KINDS.includes(data.kind) ? data.kind : null;
-  if (!kind) p('kind: нужно "run" (кнопка «Запустить» и карточка) или "page" (своя страница)');
+  if (!kind) p('kind: нужно "run" (кнопка «Запустить» и карточка), "page" (своя страница) или "web" (сервис для интернета)');
   let run = null;
-  if (data.run !== undefined && data.run !== null && data.run !== '') {
+  if (kind === 'web') {
+    if (data.run !== undefined && data.run !== null && data.run !== '') p('run: у сервиса для интернета нет программы для кнопки «Запустить», уберите поле run');
+  } else if (data.run !== undefined && data.run !== null && data.run !== '') {
     run = relParts(data.run);
     if (!run) p('run: путь к программе внутри проекта, без «..» и без диска, например "main.py"');
     else if (!/\.py$/i.test(run[run.length - 1])) p('run: программа должна быть файлом .py');
@@ -267,9 +285,11 @@ export function readServiceInfo(dir) {
       p('api: серверная часть не может лежать в папке lib (её кладёт кабинет)');
       api = null;
     }
-  }
+  } else if (kind === 'web') p('api: у сервиса для интернета нужен файл действий, например "api/index.py"');
   let result = null;
-  if (data.result !== undefined && data.result !== null && data.result !== '') {
+  if (kind === 'web') {
+    // У сайта нет файла результата: карточку кабинет собирает сам (describeService).
+  } else if (data.result !== undefined && data.result !== null && data.result !== '') {
     result = relParts(data.result);
     if (!result || result[0] !== OUTPUT_DIR || result.length < 2 || !/\.json$/i.test(result[result.length - 1])) {
       p(`result: файл .json в папке output проекта, например "${DEFAULT_RESULT}"`);
@@ -287,9 +307,28 @@ export function readServiceInfo(dir) {
     else page = PAGE_DIR;
   } else if (kind === 'run' && pageSet) {
     p('page: своя страница только у kind "page"; у kind "run" поставьте "page": null');
+  } else if (kind === 'web' && pageSet) {
+    p('page: у сервиса для интернета страница в папке public, поставьте "page": null');
   }
   const info = { name: name || basename(dir), about: typeof data.about === 'string' ? data.about.trim() : '', kind, run, result, input: data.input ?? null, page, api };
+  if (kind === 'web') info.publish = publishOf(data.publish);
   return { info, problems };
+}
+
+// Публикация сервиса для интернета из service.json: { url, published_at } или null. Адрес только http(s).
+function publishOf(v) {
+  if (!isObj(v)) return null;
+  let url = null;
+  if (typeof v.url === 'string') {
+    try {
+      const u = new URL(v.url.trim());
+      if (u.protocol === 'https:' || u.protocol === 'http:') url = v.url.trim();
+    } catch {
+      url = null;
+    }
+  }
+  const at = typeof v.published_at === 'string' && !Number.isNaN(Date.parse(v.published_at)) ? v.published_at : null;
+  return { url, published_at: at };
 }
 
 const IDENT = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -396,6 +435,25 @@ export function checkProject(root, dirArg, { cwd = process.cwd() } = {}) {
   } catch {
     // не прочиталась: ниже скажет проверка программы
   }
+  if (info?.kind === 'web') {
+    // Сервис для интернета: проверка tools/web.mjs. Замечания к service.json уже дал readServiceInfo.
+    let apiFile = null;
+    if (info.api) {
+      try {
+        const real = realpathSync(join(dir, ...info.api));
+        if (isInside(real, dir) && isFile(real)) apiFile = real;
+      } catch {
+        // нет файла: скажет проверка ниже
+      }
+    }
+    const web = checkWebProject(root, dir);
+    for (const x of web.problems) {
+      if (x.file === SERVICE_FILE && !x.line) continue;
+      if (x.line) program.push({ file: x.file, line: x.line, text: x.text ?? '', why: x.why });
+      else problems.push(x.why.includes(x.file) ? x.why : `${x.file}: ${x.why}`);
+    }
+    return { dir, info, problems: [...new Set(problems)], program, runFile: null, apiFile, resultFile: null };
+  }
   if (info?.page) {
     const pg = lstatOrNull(join(dir, info.page));
     if (!pg || pg.isSymbolicLink() || !pg.isDirectory()) problems.push(`нет папки ${info.page} в проекте (своя страница сервиса)`);
@@ -472,27 +530,135 @@ export const okCheck = (c) => c.problems.length === 0 && c.program.length === 0;
 
 // ---------- lib проекта ----------
 
-// Файлы LIB_FILES из tools/ кабинета в lib/ проекта: недостающие и отличающиеся заменяются (ссылка на месте
-// файла удаляется, а не пишется насквозь). Ответ: список обновлённых имён.
-export function syncLib(root, dir) {
+// Вид сервиса из service.json без проверок (для выбора lib и шаблона): 'run', 'page', 'web' или null.
+function kindOf(dir) {
+  try {
+    const data = readJson(join(dir, SERVICE_FILE));
+    return isObj(data) && KINDS.includes(data.kind) ? data.kind : null;
+  } catch {
+    return null;
+  }
+}
+
+// Файлы LIB_FILES (у вида web: LIB_FILES_WEB) из tools/ кабинета в lib/ проекта: недостающие и отличающиеся
+// заменяются (ссылка на месте файла удаляется, а не пишется насквозь). Ответ: список обновлённых имён.
+// kind не задан: берётся из service.json проекта.
+export function syncLib(root, dir, { kind } = {}) {
   const lib = join(dir, 'lib');
   const st = lstatOrNull(lib);
   if (st && (st.isSymbolicLink() || !st.isDirectory())) {
     throw serviceError('ELIB', 'Папка lib в проекте не обычная папка: кабинет не кладёт туда llm.py и read_table.py.');
   }
   mkdirSync(lib, { recursive: true });
+  const names = (kind ?? kindOf(dir)) === 'web' ? LIB_FILES_WEB : LIB_FILES;
   const updated = [];
-  for (const name of LIB_FILES) {
+  for (const name of names) {
     const src = join(root, 'tools', name);
     if (!isFile(src)) continue;
-    const dst = join(lib, name);
-    const cur = lstatOrNull(dst);
-    if (cur && cur.isFile() && !cur.isSymbolicLink() && sameBytes(src, dst)) continue;
-    if (cur) rmSync(dst, { force: true, recursive: cur.isDirectory() && !cur.isSymbolicLink() });
-    copyFileSync(src, dst, constants.COPYFILE_EXCL);
-    updated.push(name);
+    if (putFile(src, join(lib, name))) updated.push(name);
   }
   return updated;
+}
+
+// Файл src в dst, если там его нет или он другой (ссылка или папка на месте файла убирается). true: записан.
+function putFile(src, dst) {
+  const cur = lstatOrNull(dst);
+  if (cur && cur.isFile() && !cur.isSymbolicLink() && sameBytes(src, dst)) return false;
+  if (cur) rmSync(dst, { force: true, recursive: cur.isDirectory() && !cur.isSymbolicLink() });
+  mkdirSync(dirname(dst), { recursive: true });
+  copyFileSync(src, dst, constants.COPYFILE_EXCL);
+  return true;
+}
+
+// Служебное Python (кэш) не копируется и не удаляется как лишнее.
+const isCache = (name) => TEMPLATE_SKIP.has(name) || /\.py[co]$/i.test(name);
+
+// Папка src в dst целиком: недостающие и другие файлы заменяются, лишние удаляются (это файлы курса).
+// Ответ: число изменений.
+function mirrorDir(src, dst) {
+  let changed = 0;
+  const cur = lstatOrNull(dst);
+  if (cur && (cur.isSymbolicLink() || !cur.isDirectory())) {
+    rmSync(dst, { force: true, recursive: cur.isDirectory() && !cur.isSymbolicLink() });
+    changed++;
+  }
+  mkdirSync(dst, { recursive: true });
+  const want = new Set();
+  for (const e of readdirSync(src, { withFileTypes: true })) {
+    if (isCache(e.name)) continue;
+    want.add(e.name);
+    const from = join(src, e.name);
+    const to = join(dst, e.name);
+    if (e.isDirectory()) changed += mirrorDir(from, to);
+    else if (e.isFile() && putFile(from, to)) changed++;
+  }
+  for (const e of readdirSync(dst, { withFileTypes: true })) {
+    if (want.has(e.name) || isCache(e.name)) continue;
+    rmSync(join(dst, e.name), { force: true, recursive: true });
+    changed++;
+  }
+  return changed;
+}
+
+// Драйвер базы tools/vendor в lib/vendor проекта вида web. true: что-то поменялось.
+export function syncVendor(root, dir) {
+  const src = join(root, 'tools', 'vendor');
+  if (!isDir(src)) return false;
+  const lib = lstatOrNull(join(dir, 'lib'));
+  if (lib && (lib.isSymbolicLink() || !lib.isDirectory())) throw serviceError('ELIB', 'Папка lib в проекте не обычная папка: кабинет не кладёт туда помощников.');
+  return mirrorDir(src, join(dir, 'lib', 'vendor')) > 0;
+}
+
+// Цвета бренда для набора интерфейса: theme.css бренда, переменные под именами --brand-* (как ui/brand.css
+// страницы кабинета в serve.mjs). Нет бренда: пусто.
+export function brandCss(root) {
+  let dir = null;
+  try {
+    dir = findBrandDir(root);
+  } catch {
+    dir = null;
+  }
+  let css = '';
+  try {
+    css = dir ? readFileSync(join(dir, 'theme.css'), 'utf8') : '';
+  } catch {
+    css = '';
+  }
+  return css.replace(/--([A-Za-z0-9_-]+)/g, '--brand-$1');
+}
+
+// Набор интерфейса tools/ui (без витрины demo.html) в public/ui проекта вида web и public/ui/brand.css из бренда.
+// Свои файлы человека в public/ui не удаляются. true: что-то поменялось.
+export function syncPublicUi(root, dir) {
+  const src = join(root, 'tools', 'ui');
+  const pub = lstatOrNull(join(dir, 'public'));
+  if (pub && (pub.isSymbolicLink() || !pub.isDirectory())) throw serviceError('EPUBLIC', 'Папка public в проекте не обычная папка: кабинет не кладёт туда набор интерфейса.');
+  const ui = join(dir, 'public', 'ui');
+  const cur = lstatOrNull(ui);
+  if (cur && (cur.isSymbolicLink() || !cur.isDirectory())) throw serviceError('EPUBLIC', 'public/ui в проекте не обычная папка: кабинет не кладёт туда набор интерфейса.');
+  mkdirSync(ui, { recursive: true });
+  let changed = false;
+  if (isDir(src)) {
+    for (const e of readdirSync(src, { withFileTypes: true })) {
+      if (!e.isFile() || e.name === 'demo.html' || e.name === 'brand.css' || e.name.startsWith('.')) continue;
+      if (putFile(join(src, e.name), join(ui, e.name))) changed = true;
+    }
+  }
+  const brand = join(ui, 'brand.css');
+  const css = brandCss(root);
+  const old = lstatOrNull(brand);
+  let same = false;
+  try {
+    same = Boolean(old?.isFile()) && !old.isSymbolicLink() && readFileSync(brand, 'utf8') === css;
+  } catch {
+    same = false;
+  }
+  if (!same) {
+    if (old) rmSync(brand, { force: true, recursive: old.isDirectory() && !old.isSymbolicLink() });
+    writeFileSync(brand, css);
+    changed = true;
+  }
+  return changed;
 }
 
 // ---------- новый проект ----------
@@ -510,25 +676,51 @@ function copyTree(src, dst) {
   }
 }
 
-function gitInit(dir) {
+function gitRun(dir, args) {
   try {
-    const r = spawnSync('git', ['init', '-q'], { cwd: dir, windowsHide: true, timeout: 30000, stdio: 'ignore' });
-    if (r.error) return r.error.code === 'ENOENT' ? 'nogit' : 'fail';
-    return r.status === 0 ? 'ok' : 'fail';
-  } catch {
-    return 'fail';
+    const r = spawnSync('git', args, {
+      cwd: dir,
+      encoding: 'utf8',
+      windowsHide: true,
+      timeout: 60000,
+      env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+    });
+    if (r.error) return { code: r.error.code === 'ENOENT' ? 127 : 1, out: '', err: String(r.error.message ?? '') };
+    return { code: r.status ?? 1, out: String(r.stdout ?? '').trim(), err: String(r.stderr ?? '').trim() };
+  } catch (e) {
+    return { code: 1, out: '', err: String(e?.message ?? e) };
   }
+}
+
+// git init с веткой main (старый git без -b: init и ветка main вручную). 'ok', 'nogit' (git нет) или 'fail'.
+function gitInitMain(dir) {
+  let r = gitRun(dir, ['init', '-q', '-b', 'main']);
+  if (r.code === 127) return 'nogit';
+  if (r.code !== 0) {
+    r = gitRun(dir, ['init', '-q']);
+    if (r.code !== 0) return r.code === 127 ? 'nogit' : 'fail';
+    gitRun(dir, ['symbolic-ref', 'HEAD', 'refs/heads/main']);
+  }
+  return 'ok';
+}
+
+function gitInit(dir) {
+  return gitInitMain(dir);
 }
 
 const cleanName = (s) => String(s ?? '').replace(/[\u0000-\u001f\u007f\u2028\u2029]+/g, ' ').replace(/\s+/g, ' ').trim().replace(/^["'«]+|["'»]+$/g, '').trim();
 
-// Новый проект сервиса: { dir, git, name }. Папка латиницей из названия, свободное имя (-2, -3...).
-export function createProject(root, name, { dir: parent, git = true, cwd = process.cwd() } = {}) {
+// Новый проект сервиса: { dir, git, name, kind }. Папка латиницей из названия, свободное имя (-2, -3...).
+// kind 'web': шаблон templates/web-service, в lib помощники сайта и драйвер базы, в public/ui набор интерфейса.
+export function createProject(root, name, { dir: parent, git = true, cwd = process.cwd(), kind = 'run' } = {}) {
   const title = cleanName(name);
   if (!title) throw serviceError('ENONAME', 'Укажите название сервиса: node tools/services.mjs new "Сводка продаж".');
   if (title.length > NAME_MAX) throw serviceError('ENONAME', `Название сервиса не длиннее ${NAME_MAX} знаков.`);
-  const tpl = join(root, ...TEMPLATE);
-  if (!isDir(tpl)) throw serviceError('ENOTEMPLATE', `Нет шаблона ${TEMPLATE.join('/')} в кабинете. Скажите Claude «обнови кабинет».`);
+  if (kind !== 'run' && kind !== 'web') throw serviceError('EKIND', 'Вид сервиса: --kind run (на компьютере) или --kind web (для коллег по ссылке).');
+  const web = kind === 'web';
+  const tplParts = web ? TEMPLATE_WEB : TEMPLATE;
+  const tpl = join(root, ...tplParts);
+  if (!isDir(tpl)) throw serviceError('ENOTEMPLATE', `Нет шаблона ${tplParts.join('/')} в кабинете. Скажите Claude «обнови кабинет».`);
   const home = parent ? resolve(cwd, parent) : servicesHome(root);
   let cabinet = resolve(root);
   try {
@@ -545,7 +737,11 @@ export function createProject(root, name, { dir: parent, git = true, cwd = proce
   const dir = join(realHome, folder);
   mkdirSync(dir);
   copyTree(tpl, dir);
-  syncLib(root, dir);
+  syncLib(root, dir, { kind });
+  if (web) {
+    syncVendor(root, dir);
+    syncPublicUi(root, dir);
+  }
   for (const sub of ['input', OUTPUT_DIR]) mkdirSync(join(dir, sub), { recursive: true });
   const file = join(dir, SERVICE_FILE);
   let service = {};
@@ -555,10 +751,12 @@ export function createProject(root, name, { dir: parent, git = true, cwd = proce
     // в шаблоне нет паспорта: пишем по договору
   }
   if (!isObj(service)) service = {};
-  service = { name: title, about: '', kind: 'run', run: 'main.py', result: DEFAULT_RESULT, input: 'input/', page: null, ...service };
-  service.name = title;
+  const base = web
+    ? { name: title, about: '', kind: 'web', api: 'api/index.py', public: 'public/', db: 'db/' }
+    : { name: title, about: '', kind: 'run', run: 'main.py', result: DEFAULT_RESULT, input: 'input/', page: null };
+  service = { ...base, ...service, name: title, template_version: TEMPLATE_VERSION };
   writeFileSync(file, JSON.stringify(service, null, 2) + '\n');
-  return { dir, name: title, git: git ? gitInit(dir) : 'skip' };
+  return { dir, name: title, kind, git: git ? gitInit(dir) : 'skip' };
 }
 
 // ---------- запуск ----------
@@ -779,8 +977,10 @@ function runningServices(root, exceptDir) {
   return readRegistry(root).list.filter((e) => !samePath(e.path, exceptDir) && isRunning(e.path)).length;
 }
 
+export const WEB_NO_RUN = 'У сервиса для интернета нет кнопки «Запустить»: он работает по ссылке.';
+
 // Синхронно: проверка проекта, lib, замок; затем запуск. Бросает ошибку с кодом, если запускать нельзя
-// (ENOARG, ENOSERVICE, ENODIR, EBADSERVICE, ENORUN, ELIB, EOUTSIDE, ERUNNING, ELIMIT).
+// (ENOARG, ENOSERVICE, ENODIR, EWEB, EBADSERVICE, ENORUN, ELIB, EOUTSIDE, ERUNNING, ELIMIT).
 // done никогда не отклоняется: { ok, code, durationMs, logPath, startedAt }.
 export function startServiceRun(
   root,
@@ -797,6 +997,7 @@ export function startServiceRun(
 ) {
   root = resolve(root);
   const { dir, entry } = resolveTarget(root, target, { cwd });
+  if (kindOf(dir) === 'web') throw serviceError('EWEB', WEB_NO_RUN);
   const c = checkProject(root, dir);
   if (!okCheck(c)) {
     throw serviceError('EBADSERVICE', `Сервис не запускается, в проекте есть что поправить:\n${problemLines(c).join('\n')}`, { check: c });
@@ -902,8 +1103,9 @@ export function describeService(root, entry) {
   if (!isDir(entry.path)) return { ...base, error: `папка сервиса не найдена: ${entry.path}` };
   const dir = entry.path;
   const { info, problems } = readServiceInfo(dir);
-  const res = readResultOf(dir, info);
   const name = info?.name ?? base.name;
+  if (info?.kind === 'web') return describeWeb(base, dir, info, problems);
+  const res = readResultOf(dir, info);
   return {
     ...base,
     name,
@@ -916,6 +1118,42 @@ export function describeService(root, entry) {
     error: [...problems, res.error].filter(Boolean).join('; ') || null,
     running: isRunning(dir),
     lastRun: readLastRun(dir),
+  };
+}
+
+// Сервис для интернета: для страницы кабинета это своя страница (kind 'page', web: true) по адресу s/<slug>/,
+// там карточка сайта (tools/web-card.html). Итог карточки: опубликован ли и где. Кнопки «Запустить» нет.
+function describeWeb(base, dir, info, problems) {
+  const url = info.publish?.url ?? null;
+  let updated = info.publish?.published_at ?? null;
+  if (!updated) {
+    try {
+      updated = new Date(statSync(join(dir, SERVICE_FILE)).mtimeMs).toISOString();
+    } catch {
+      updated = new Date().toISOString();
+    }
+  }
+  return {
+    ...base,
+    name: info.name,
+    title: info.name,
+    about: info.about ?? '',
+    kind: 'page',
+    web: true,
+    run: false,
+    page: `s/${base.slug}/`,
+    url,
+    result: {
+      title: info.name,
+      status: url ? 'green' : 'yellow',
+      summary: url ? `Опубликован: ${url}` : 'Не опубликован: скажите «опубликуй сервис» в папке сервиса',
+      updated_at: updated,
+      columns: [],
+      rows: [],
+    },
+    error: problems.join('; ') || null,
+    running: false,
+    lastRun: null,
   };
 }
 
@@ -939,7 +1177,11 @@ export function addService(root, dirArg, { cwd = process.cwd() } = {}) {
   if (!okCheck(c)) throw serviceError('EBADSERVICE', 'Сервис не добавлен: в проекте есть что поправить.', { check: c });
   const { list, error, broken } = readRegistry(root);
   if (broken) throw serviceError('EREGISTRY', `Реестр сервисов не читается: ${error}. Покажите это тренеру.`);
-  syncLib(root, c.dir);
+  syncLib(root, c.dir, { kind: c.info.kind });
+  if (c.info.kind === 'web') {
+    syncVendor(root, c.dir);
+    syncPublicUi(root, c.dir);
+  }
   const now = new Date().toISOString();
   const old = list.find((e) => samePath(e.path, c.dir));
   let entry;
@@ -969,15 +1211,322 @@ export function removeService(root, slug) {
   return entry;
 }
 
+// ---------- обновление проектов после «обнови кабинет» ----------
+
+// Все проекты сервисов: записи реестра и папки в «Сервисы» рядом с кабинетом, где есть service.json.
+// Без дублей (по настоящему пути). [{ dir, name }]: name из реестра или имя папки.
+export function findProjects(root) {
+  const out = [];
+  const seen = new Set();
+  const add = (path, name) => {
+    let real;
+    try {
+      real = realpathSync(path);
+    } catch {
+      return;
+    }
+    if (!isDir(real)) return;
+    const key = process.platform === 'win32' ? real.toLowerCase() : real;
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push({ dir: real, name: name || basename(real) });
+  };
+  for (const e of readRegistry(root).list) add(e.path, e.name ?? e.slug);
+  const home = servicesHome(root);
+  let entries = [];
+  try {
+    entries = readdirSync(home, { withFileTypes: true });
+  } catch {
+    entries = [];
+  }
+  for (const e of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+    if (!e.isDirectory() || e.name.startsWith('.') || TEMPLATE_SKIP.has(e.name)) continue;
+    const dir = join(home, e.name);
+    if (isFile(join(dir, SERVICE_FILE))) add(dir, null);
+  }
+  return out;
+}
+
+// Раздел «Уроки» правил проекта: от строки «## Уроки» до конца файла.
+const LESSONS_RE = /^##[ \t]+Уроки[ \t]*\r?$/m;
+
+// Новые правила из шаблона с разделом «Уроки» человека байт в байт. В старом раздела нет: шаблон как есть.
+export function mergeLessons(oldBuf, tplBuf) {
+  const oldText = oldBuf.toString('utf8');
+  const m = LESSONS_RE.exec(oldText);
+  if (!m) return Buffer.from(tplBuf);
+  const lessons = oldBuf.subarray(Buffer.byteLength(oldText.slice(0, m.index), 'utf8'));
+  const tplText = tplBuf.toString('utf8');
+  const t = LESSONS_RE.exec(tplText);
+  let head;
+  if (t) head = tplBuf.subarray(0, Buffer.byteLength(tplText.slice(0, t.index), 'utf8'));
+  else head = Buffer.from(tplText.replace(/\s*$/, '') + '\n\n', 'utf8');
+  return Buffer.concat([head, lessons]);
+}
+
+const stamp = (d = new Date()) => `${d.getFullYear()}${pad2(d.getMonth() + 1)}${pad2(d.getDate())}-${pad2(d.getHours())}${pad2(d.getMinutes())}`;
+
+// Копия файла в .claude/backup проекта: <имя>-<ГГГГММДД-ЧЧММ><расширение>, занято: -2, -3. Ответ: путь копии.
+function backupFile(dir, file, prefix, ext) {
+  const bdir = join(dir, '.claude', 'backup');
+  mkdirSync(bdir, { recursive: true });
+  const base = `${prefix}-${stamp()}`;
+  for (let n = 1; n < 100; n++) {
+    const target = join(bdir, `${base}${n === 1 ? '' : `-${n}`}${ext}`);
+    if (lstatOrNull(target)) {
+      if (sameBytes(file, target)) return target;
+      continue;
+    }
+    copyFileSync(file, target, constants.COPYFILE_EXCL);
+    return target;
+  }
+  throw serviceError('EBACKUP', 'не удалось сохранить копию старого файла в .claude/backup');
+}
+
+// Записать data в file через временный файл; прежний файл (если другой) сначала копируется в backup.
+function replaceWithBackup(dir, file, data, prefix, ext) {
+  const cur = lstatOrNull(file);
+  if (cur && cur.isFile() && !cur.isSymbolicLink()) {
+    if (readFileSync(file).equals(data)) return false;
+    backupFile(dir, file, prefix, ext);
+  } else if (cur) {
+    rmSync(file, { force: true, recursive: cur.isDirectory() && !cur.isSymbolicLink() });
+  }
+  mkdirSync(dirname(file), { recursive: true });
+  const tmp = `${file}.${process.pid}.tmp`;
+  writeFileSync(tmp, data);
+  try {
+    renameSync(tmp, file);
+  } catch (e) {
+    rmSync(tmp, { force: true });
+    throw e;
+  }
+  return true;
+}
+
+// .gitignore: недостающие строки шаблона дописываются в конец, свои строки человека не трогаются.
+function mergeGitignore(dir, tplFile) {
+  const file = join(dir, '.gitignore');
+  const tpl = readFileSync(tplFile, 'utf8');
+  const cur = lstatOrNull(file);
+  if (!cur) {
+    writeFileSync(file, tpl);
+    return true;
+  }
+  if (!cur.isFile() || cur.isSymbolicLink()) throw serviceError('EGITIGNORE', '.gitignore в проекте не обычный файл');
+  const text = readFileSync(file, 'utf8');
+  const have = new Set(text.split(/\r?\n/).map((l) => l.trim()));
+  const missing = tpl
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter((l) => l && !l.startsWith('#') && !have.has(l));
+  if (!missing.length) return false;
+  const eol = text.includes('\r\n') ? '\r\n' : '\n';
+  const sep = text === '' || text.endsWith('\n') ? '' : eol;
+  writeFileSync(file, `${text}${sep}${eol}# Добавлено кабинетом${eol}${[...new Set(missing)].join(eol)}${eol}`);
+  return true;
+}
+
+const GIT_FIRST_COMMIT = 'Сервис до обновления кабинета';
+
+// Первая версия в истории: всё, что не закрыто .gitignore. Нет своего имени в git: подписывается кабинет.
+function gitCommitAll(dir) {
+  const add = gitRun(dir, ['add', '-A']);
+  if (add.code !== 0) throw serviceError('EGIT', `git не сохранил версию (${add.err.split('\n')[0] || `код ${add.code}`})`);
+  const ident = gitRun(dir, ['config', 'user.email']).out ? [] : ['-c', 'user.name=Кабинет курса', '-c', 'user.email=kabinet@localhost'];
+  const r = gitRun(dir, [...ident, 'commit', '-q', '--allow-empty', '--no-verify', '-m', GIT_FIRST_COMMIT]);
+  if (r.code !== 0) throw serviceError('EGIT', `git не сохранил версию (${r.err.split('\n')[0] || `код ${r.code}`})`);
+}
+
+// История версий проекта: нет .git: git init (ветка main) и первая версия; есть, ветка master без origin: main;
+// есть, но версий ещё нет (папка из «новый сервис»): первая версия. Ответ: что поменялось.
+function upgradeGit(dir) {
+  const changed = [];
+  if (!lstatOrNull(join(dir, '.git'))) {
+    const init = gitInitMain(dir);
+    if (init === 'nogit') return changed;
+    if (init !== 'ok') throw serviceError('EGIT', 'git init не сработал в папке сервиса');
+    gitCommitAll(dir);
+    changed.push('git');
+    return changed;
+  }
+  const branch = gitRun(dir, ['symbolic-ref', '--short', 'HEAD']);
+  if (branch.code === 127) return changed;
+  const hasHead = gitRun(dir, ['rev-parse', '--verify', '-q', 'HEAD']).code === 0;
+  const origin = gitRun(dir, ['remote', 'get-url', 'origin']).code === 0;
+  if (branch.code === 0 && branch.out === 'master' && !origin) {
+    const r = hasHead ? gitRun(dir, ['branch', '-m', 'master', 'main']) : gitRun(dir, ['symbolic-ref', 'HEAD', 'refs/heads/main']);
+    if (r.code !== 0) throw serviceError('EGIT', 'git не переименовал ветку master в main');
+    changed.push('git: ветка main');
+  }
+  if (!hasHead) {
+    gitCommitAll(dir);
+    changed.push('git');
+  }
+  return changed;
+}
+
+// service.json: поле template_version, порядок остальных полей сохраняется. true: записан.
+function writeTemplateVersion(dir) {
+  const file = join(dir, SERVICE_FILE);
+  const data = readJson(file);
+  if (!isObj(data)) throw serviceError('EBADSERVICE', `в ${SERVICE_FILE} нужен объект JSON`);
+  if (data.template_version === TEMPLATE_VERSION) return false;
+  data.template_version = TEMPLATE_VERSION;
+  const tmp = `${file}.${process.pid}.tmp`;
+  writeFileSync(tmp, JSON.stringify(data, null, 2) + '\n');
+  try {
+    renameSync(tmp, file);
+  } catch (e) {
+    rmSync(tmp, { force: true });
+    throw e;
+  }
+  return true;
+}
+
+const reason = (e) => String(e?.message ?? e).replace(/\s+/g, ' ').replace(/[.\s]+$/, '');
+
+// Обновить проект сервиса по новой версии кабинета: { dir, name, kind, changed: [...], skipped?, error? }.
+// Каждый шаг отдельно: сбой одного не мешает остальным. Файлы человека (main.py, api.py, page/, input/,
+// output/, db/, public/ кроме public/ui, api/index.py, .env) не трогаются; недостающие файлы каркаса web
+// кладутся, только если их нет.
+export function upgradeProject(root, dirArg, { cwd = process.cwd() } = {}) {
+  root = resolve(root);
+  const asked = resolve(cwd, String(dirArg ?? ''));
+  const out = { dir: asked, name: basename(asked), kind: null, changed: [] };
+  const errors = [];
+  const step = (fn) => {
+    try {
+      fn();
+    } catch (e) {
+      errors.push(reason(e));
+    }
+  };
+  if (!dirArg || !isDir(asked)) return { ...out, error: 'нет папки сервиса' };
+  const dir = realpathSync(asked);
+  out.dir = dir;
+  let data;
+  try {
+    data = readJson(join(dir, SERVICE_FILE));
+  } catch (e) {
+    return { ...out, error: e.code === 'ENOENT' ? `нет файла ${SERVICE_FILE}` : `${SERVICE_FILE} повреждён или не в формате JSON` };
+  }
+  if (!isObj(data)) return { ...out, error: `в ${SERVICE_FILE} нужен объект JSON` };
+  if (typeof data.name === 'string' && data.name.trim()) out.name = data.name.trim();
+  // 8. Идёт расчёт: не мешаем, обновится в следующий раз.
+  if (isRunning(dir)) return { ...out, skipped: 'идёт расчёт' };
+  // 1. Вид и шаблон.
+  const kind = KINDS.includes(data.kind) ? data.kind : null;
+  if (!kind) return { ...out, error: `в ${SERVICE_FILE} неизвестный вид сервиса (kind)` };
+  out.kind = kind;
+  const web = kind === 'web';
+  const tpl = join(root, ...(web ? TEMPLATE_WEB : TEMPLATE));
+  if (!isDir(tpl)) return { ...out, error: `в кабинете нет шаблона ${(web ? TEMPLATE_WEB : TEMPLATE).join('/')}` };
+  const changed = out.changed;
+  // 5. .gitignore до git: ключи и данные не попадут в первую версию.
+  step(() => {
+    if (isFile(join(tpl, '.gitignore')) && mergeGitignore(dir, join(tpl, '.gitignore'))) changed.push('.gitignore');
+  });
+  // 6. git: версия «до обновления» сохраняется до замены правил.
+  step(() => changed.push(...upgradeGit(dir)));
+  // 2. lib (у web ещё драйвер базы и набор интерфейса).
+  step(() => changed.push(...syncLib(root, dir, { kind }).map((n) => `lib/${n}`)));
+  if (web) {
+    step(() => {
+      if (syncVendor(root, dir)) changed.push('lib/vendor');
+    });
+    step(() => {
+      if (syncPublicUi(root, dir)) changed.push('public/ui');
+    });
+    step(() => {
+      // Каркас сайта: только недостающие файлы (свои файлы человека не перезаписываются).
+      for (const rel of WEB_START_FILES) {
+        const src = join(tpl, ...rel.split('/'));
+        const dst = join(dir, ...rel.split('/'));
+        if (!isFile(src) || lstatOrNull(dst)) continue;
+        if (rel.startsWith('db/') && hasSql(join(dir, 'db'))) continue;
+        mkdirSync(dirname(dst), { recursive: true });
+        copyFileSync(src, dst, constants.COPYFILE_EXCL);
+        changed.push(rel);
+      }
+    });
+    step(() => {
+      // vercel.json: файл курса, другой заменяется (копия в .claude/backup).
+      const src = join(tpl, 'vercel.json');
+      if (isFile(src) && replaceWithBackup(dir, join(dir, 'vercel.json'), readFileSync(src), 'vercel', '.json')) changed.push('vercel.json');
+    });
+  }
+  // 3. CLAUDE.md: новая версия шаблона, раздел «Уроки» человека как был.
+  step(() => {
+    const src = join(tpl, 'CLAUDE.md');
+    if (!isFile(src)) return;
+    const file = join(dir, 'CLAUDE.md');
+    const cur = lstatOrNull(file);
+    const old = cur?.isFile() && !cur.isSymbolicLink() ? readFileSync(file) : null;
+    const next = old ? mergeLessons(old, readFileSync(src)) : readFileSync(src);
+    if (replaceWithBackup(dir, file, next, 'CLAUDE', '.md')) changed.push('CLAUDE.md');
+  });
+  // 4. .claude/settings.json: файл курса.
+  step(() => {
+    const src = join(tpl, '.claude', 'settings.json');
+    if (isFile(src) && replaceWithBackup(dir, join(dir, '.claude', 'settings.json'), readFileSync(src), 'settings', '.json')) changed.push('.claude/settings.json');
+  });
+  // 7. Версия шаблона в service.json.
+  step(() => {
+    if (writeTemplateVersion(dir)) changed.push(SERVICE_FILE);
+  });
+  return errors.length ? { ...out, error: errors.join('; ') } : out;
+}
+
+function hasSql(dir) {
+  try {
+    return readdirSync(dir).some((n) => /\.sql$/i.test(n));
+  } catch {
+    return false;
+  }
+}
+
+// «в 1 сервисе», «в 3 сервисах», «в 21 сервисе».
+const inServices = (n) => `${n} ${n % 10 === 1 && n % 100 !== 11 ? 'сервисе' : 'сервисах'}`;
+
+// Все проекты: { results, message }. message: строки человеку (пусто, если обновлять было нечего).
+export function upgradeAll(root) {
+  const results = [];
+  for (const p of findProjects(root)) {
+    let r;
+    try {
+      r = upgradeProject(root, p.dir);
+    } catch (e) {
+      r = { dir: p.dir, name: p.name, kind: null, changed: [], error: reason(e) };
+    }
+    if (r.name === basename(r.dir) && p.name) r.name = p.name;
+    results.push(r);
+  }
+  return { results, message: upgradeMessage(results) };
+}
+
+export function upgradeMessage(results) {
+  const done = results.filter((r) => !r.error && !r.skipped && r.changed.length);
+  const lines = [];
+  if (done.length) lines.push(`Обновлены правила в ${inServices(done.length)}: ${done.map((r) => r.name).join(', ')}.`);
+  for (const r of results.filter((x) => x.skipped)) lines.push(`Сервис «${r.name}» сейчас считается: обновится при следующем обновлении кабинета.`);
+  for (const r of results.filter((x) => x.error)) lines.push(`Сервис «${r.name}» не обновлён: ${r.error}.`);
+  return lines.join('\n');
+}
+
 // ---------- node tools/services.mjs ----------
 
 const USAGE = `Сервисы-проекты кабинета:
-  node tools/services.mjs new <название> [--dir <папка>]   создать проект сервиса (по умолчанию в папке ${SERVICES_DIR_NAME} рядом с кабинетом)
+  node tools/services.mjs new <название> [--kind run|web] [--dir <папка>]
+                                                           создать проект сервиса (по умолчанию в папке ${SERVICES_DIR_NAME} рядом с кабинетом);
+                                                           --kind web: сервис для коллег по ссылке в интернете
   node tools/services.mjs check <папка>                    проверить service.json и программу по правилам кабинета
   node tools/services.mjs run <папка или имя>              запустить программу сервиса, как кнопкой «Запустить»
   node tools/services.mjs add <папка>                      проверить и добавить в кабинет (повторно: обновить)
   node tools/services.mjs remove <имя>                     убрать сервис из кабинета (папку проекта не трогает)
   node tools/services.mjs list                             сервисы кабинета, их результат и последний запуск
+  node tools/services.mjs upgrade <папка>                  обновить правила, настройки и lib проекта по версии кабинета
+  node tools/services.mjs upgrade-all                      то же для всех сервисов
 <имя>: имя сервиса в кабинете латиницей, например svodka-prodazh (его показывает list).`;
 
 const COLOR = { green: 'зелёный', yellow: 'жёлтый', red: 'красный' };
@@ -1002,16 +1551,20 @@ function logTail(logPath, count = 12) {
 function cliNew(root, args) {
   const rest = [];
   let dir = null;
+  let kind = 'run';
   for (let i = 0; i < args.length; i++) {
     if (args[i] === '--dir') dir = args[++i] ?? '';
+    else if (args[i] === '--kind') kind = args[++i] ?? '';
+    else if (args[i].startsWith('--kind=')) kind = args[i].slice('--kind='.length);
     else rest.push(args[i]);
   }
   if (dir === '') return { text: 'Укажите папку после --dir.', code: 2 };
+  if (kind !== 'run' && kind !== 'web') return { text: 'Вид сервиса после --kind: run (на компьютере) или web (для коллег по ссылке в интернете).', code: 2 };
   let made;
   try {
-    made = createProject(root, rest.join(' '), { dir });
+    made = createProject(root, rest.join(' '), { dir, kind });
   } catch (e) {
-    if (['ENONAME', 'ENOTEMPLATE', 'EINSIDE', 'EMANY'].includes(e.code)) return { text: e.message, code: 2 };
+    if (['ENONAME', 'ENOTEMPLATE', 'EINSIDE', 'EMANY', 'EKIND'].includes(e.code)) return { text: e.message, code: 2 };
     throw e;
   }
   const git = {
@@ -1020,10 +1573,14 @@ function cliNew(root, args) {
     fail: 'Git не включился в этой папке: сервису это не мешает.',
     skip: null,
   }[made.git];
+  const inside =
+    made.kind === 'web'
+      ? `Внутри: ${SERVICE_FILE}, страница сайта public/index.html, действия api/index.py, таблицы базы db/, помощники из кабинета в lib.`
+      : `Внутри: ${SERVICE_FILE}, main.py, input, output, lib (${LIB_FILES.join(', ')} из кабинета).`;
   return {
     text: [
-      `Сервис «${made.name}» создан: ${made.dir}`,
-      `Внутри: ${SERVICE_FILE}, main.py, input, output, lib (${LIB_FILES.join(', ')} из кабинета).`,
+      made.kind === 'web' ? `Сервис для интернета «${made.name}» создан: ${made.dir}` : `Сервис «${made.name}» создан: ${made.dir}`,
+      inside,
       git,
       'Дальше: откройте эту папку в новом разговоре (Code → Open folder) и опишите, что должен делать сервис.',
     ]
@@ -1044,7 +1601,12 @@ function cliCheck(root, arg) {
   }
   const title = c.info?.name ? `«${c.info.name}»` : basename(c.dir);
   if (okCheck(c)) {
-    const what = c.runFile ? `программа ${relOf(c.dir, c.runFile)} без запрещённого` : 'программы нет (своя страница)';
+    const what =
+      c.info.kind === 'web'
+        ? `сервис для интернета: действия ${c.apiFile ? relOf(c.dir, c.apiFile) : 'api/index.py'}, страница и таблицы без запрещённого`
+        : c.runFile
+          ? `программа ${relOf(c.dir, c.runFile)} без запрещённого`
+          : 'программы нет (своя страница)';
     return { text: `Проверка сервиса ${title} пройдена: ${c.dir}\n${SERVICE_FILE} по договору, ${what}.`, code: 0 };
   }
   const lines = problemLines(c);
@@ -1052,7 +1614,11 @@ function cliCheck(root, arg) {
     text: [
       `Проверка сервиса ${title} (${c.dir}): нужно поправить ${lines.length}.`,
       ...lines,
-      c.program.length ? 'Программа сервиса работает без Claude и без окна: запуск других программ, eval и exec, прямые API моделей и пути вне проекта ей нельзя. Модель только через lib/llm.py.' : null,
+      c.program.length && c.info?.kind === 'web'
+        ? 'Сервис для интернета работает без Claude: запуск других программ, eval и exec, модель, свой сервер и пути вне проекта ему нельзя, запросы к базе только с параметрами.'
+        : c.program.length
+          ? 'Программа сервиса работает без Claude и без окна: запуск других программ, eval и exec, прямые API моделей и пути вне проекта ей нельзя. Модель только через lib/llm.py.'
+          : null,
       'Итог проверки: поправьте и проверьте снова, в кабинет сервис с такими ошибками не добавляется.',
     ]
       .filter(Boolean)
@@ -1089,7 +1655,7 @@ function reportRun(c, r) {
 }
 
 // Запуск не начался: нет сервиса, уже идёт и подобное (код выхода 2, как у processes.mjs).
-const RUN_REFUSALS = new Set(['ENOARG', 'ENOSERVICE', 'ENODIR', 'ELIB', 'EOUTSIDE', 'ERUNNING', 'ELIMIT']);
+const RUN_REFUSALS = new Set(['ENOARG', 'ENOSERVICE', 'ENODIR', 'EWEB', 'ELIB', 'EOUTSIDE', 'ERUNNING', 'ELIMIT']);
 
 async function cliRun(root, arg) {
   if (!arg) return { text: 'Укажите сервис: node tools/services.mjs run <папка или имя>.', code: 2 };
@@ -1123,14 +1689,16 @@ function cliAdd(root, arg) {
     throw e;
   }
   const { entry, updated } = r;
-  const how = entry.kind === 'page' ? 'своя страница, кнопка «Открыть»' : 'кнопка «Запустить»';
+  const how = entry.kind === 'web' ? 'сервис для интернета, кнопка «Открыть» (адрес сайта и код доступа)' : entry.kind === 'page' ? 'своя страница, кнопка «Открыть»' : 'кнопка «Запустить»';
   return {
     text: [
       updated ? `Сервис «${entry.name}» обновлён в кабинете.` : `Сервис «${entry.name}» добавлен в кабинет.`,
       `Карточка на странице «мой кабинет», в меню «Мои сервисы»: ${how}.`,
       `Имя в кабинете: ${entry.slug}. Папка проекта: ${entry.path}`,
-      `Запуск из кабинета: node tools/services.mjs run ${entry.slug}`,
-    ].join('\n'),
+      entry.kind === 'web' ? null : `Запуск из кабинета: node tools/services.mjs run ${entry.slug}`,
+    ]
+      .filter(Boolean)
+      .join('\n'),
     code: 0,
   };
 }
@@ -1164,10 +1732,15 @@ export function formatList(root) {
   }
   const lines = [`Сервисов-проектов в кабинете: ${list.length}.`];
   list.forEach((s, i) => {
-    const how = s.kind === 'page' ? `своя страница, кнопка «Открыть»${s.run ? ' и «Запустить»' : ''}` : 'программа, кнопка «Запустить»';
+    const how = s.web
+      ? 'сервис для интернета, кнопка «Открыть»'
+      : s.kind === 'page'
+        ? `своя страница, кнопка «Открыть»${s.run ? ' и «Запустить»' : ''}`
+        : 'программа, кнопка «Запустить»';
     lines.push(`${i + 1}. «${s.name}» (имя ${s.slug}): ${how}. Папка: ${s.path}`);
     if (s.running) lines.push('   Сейчас идёт расчёт.');
-    if (s.result) lines.push(`   Результат: обновлён ${formatTime(s.result.updated_at)}, ${COLOR[s.result.status]}. Итог: ${s.result.summary}`);
+    if (s.web) lines.push(`   ${s.result.summary}`);
+    else if (s.result) lines.push(`   Результат: обновлён ${formatTime(s.result.updated_at)}, ${COLOR[s.result.status]}. Итог: ${s.result.summary}`);
     else if (!s.error && s.run) lines.push('   Результата пока нет.');
     const last = describeLastRun(s);
     if (last) lines.push(`   ${last}`);
@@ -1175,6 +1748,28 @@ export function formatList(root) {
   });
   if (error) lines.push(`Ошибка: ${error}`);
   return { text: lines.join('\n'), code: error || list.some((s) => s.error) ? 1 : 0 };
+}
+
+function cliUpgrade(root, arg) {
+  if (!arg) return { text: 'Укажите папку сервиса: node tools/services.mjs upgrade <папка>.', code: 2 };
+  const r = upgradeProject(root, arg);
+  if (r.error === 'нет папки сервиса') return { text: `Нет папки сервиса: ${r.dir}`, code: 2 };
+  if (r.error) {
+    const done = r.changed.length ? `\nОбновлено: ${r.changed.join(', ')}.` : '';
+    return { text: `Сервис «${r.name}» не обновлён: ${r.error}.${done}`, code: 1 };
+  }
+  if (r.skipped) return { text: `Сервис «${r.name}» сейчас считается: обновите его, когда расчёт закончится.`, code: 2 };
+  if (!r.changed.length) return { text: `Сервис «${r.name}» уже по новой версии кабинета: ${r.dir}`, code: 0 };
+  const lines = [`Сервис «${r.name}» обновлён: ${r.changed.join(', ')}.`, `Папка: ${r.dir}`];
+  if (r.changed.includes('CLAUDE.md')) lines.push('Правила проекта новые, раздел «Уроки» на месте; прежние правила в .claude/backup.');
+  return { text: lines.join('\n'), code: 0 };
+}
+
+function cliUpgradeAll(root, json) {
+  const r = upgradeAll(root);
+  if (json) return { text: JSON.stringify(r, null, 2), code: r.results.some((x) => x.error) ? 1 : 0 };
+  const text = r.message || (r.results.length ? 'Все сервисы уже по новой версии кабинета.' : 'Сервисов-проектов пока нет.');
+  return { text, code: r.results.some((x) => x.error) ? 1 : 0 };
 }
 
 async function dispatch(root, argv) {
@@ -1186,6 +1781,8 @@ async function dispatch(root, argv) {
   if (cmd === 'add') return cliAdd(root, arg);
   if (cmd === 'remove') return cliRemove(root, arg);
   if (cmd === 'list') return formatList(root);
+  if (cmd === 'upgrade') return cliUpgrade(root, arg);
+  if (cmd === 'upgrade-all') return cliUpgradeAll(root, args.includes('--json'));
   return { text: USAGE, code: cmd ? 2 : 0 };
 }
 

@@ -259,7 +259,7 @@ test('exitCodeFor: 1 при fail, иначе 0', () => {
 
 test('CLI --json: массив результатов', () => {
   // Скиллы kabinet-* в настоящую папку Claude разработчика тест не ставит.
-  const r = spawnSync(process.execPath, [join(ROOT, 'tools', 'check.mjs'), '--json'], { encoding: 'utf8', env: { ...process.env, AI_CABINET_NO_USER_SKILLS: '1' } });
+  const r = spawnSync(process.execPath, [join(ROOT, 'tools', 'check.mjs'), '--json'], { encoding: 'utf8', env: { ...process.env, AI_CABINET_NO_USER_SKILLS: '1', AI_CABINET_NO_PUSHGUARD: '1' } });
   const arr = JSON.parse(r.stdout);
   assert.ok(Array.isArray(arr) && arr.length >= 6);
   for (const x of arr) {
@@ -494,4 +494,23 @@ test('buildExecCall: аргумент с пробелом берётся в ка
   assert.deepEqual(buildExecCall('py', args, true, 'win32'), { file: 'py -3 -c "import openpyxl, docx"', args: undefined });
   assert.deepEqual(buildExecCall('python3', ['-c', 'import openpyxl, docx'], true, 'linux'), { file: "python3 -c 'import openpyxl, docx'", args: undefined });
   assert.deepEqual(buildExecCall('python3', ['-c', 'import openpyxl, docx'], false, 'linux'), { file: 'python3', args: ['-c', 'import openpyxl, docx'] });
+});
+
+test('публикация: строка блока пуша и связь с GitHub, Vercel, Supabase', async () => {
+  const { pushGuardResult, checkPublishNet } = await import('../check.mjs');
+  const url = 'https://github.com/pdllmsk/ai-cabinet.git';
+  assert.equal(pushGuardResult({ origin: null }), null);
+  assert.equal(pushGuardResult({ origin: 'https://github.com/me/x.git', pushurl: null, hook: false }), null);
+  assert.equal(pushGuardResult({ origin: url, pushurl: 'no_push://pdllmsk/ai-cabinet', hook: true }).status, 'ok');
+  const bad = pushGuardResult({ origin: url, pushurl: null, hook: true });
+  assert.equal(bad.status, 'fail');
+  assert.match(bad.hint, /тренеру/);
+
+  const good = await checkPublishNet(async () => ({ ok: true }));
+  assert.equal(good.status, 'ok');
+  const cut = await checkPublishNet(async (h) => (h.port === 6543 ? { ok: false, error: 'ETIMEDOUT' } : { ok: true }));
+  assert.equal(cut.status, 'warn');
+  assert.match(cut.title, /pooler\.supabase\.com:6543/);
+  assert.match(cut.hint, /ИТ/);
+  assert.doesNotMatch(cut.title + cut.hint, /[‒-―]/);
 });

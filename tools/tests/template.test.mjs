@@ -229,7 +229,8 @@ function quotes(text) {
 test('скиллы процессов: фразы человеку без слов скрипт, порт, сервер, терминал, консоль, в фоне', () => {
   const words = /(^|[^а-яё])(скрипт|порт|сервер|терминал|консол|в фоне)/i;
   for (const f of ['.claude/skills/add-process/SKILL.md', '.claude/skills/run-process/SKILL.md', '.claude/skills/demo-process/SKILL.md',
-    `${USER_SKILLS}kabinet-novyi-servis/SKILL.md`, `${USER_SKILLS}kabinet-dobav-v-kabinet/SKILL.md`, 'templates/service-project/CLAUDE.md', 'templates/service-project/README.md']) {
+    `${USER_SKILLS}kabinet-novyi-servis/SKILL.md`, `${USER_SKILLS}kabinet-dobav-v-kabinet/SKILL.md`, 'templates/service-project/CLAUDE.md', 'templates/service-project/README.md',
+    `${USER_SKILLS}kabinet-podkluchi-publikaciyu/SKILL.md`, `${USER_SKILLS}kabinet-opublikuy/SKILL.md`, 'templates/web-service/CLAUDE.md']) {
     const bad = quotes(read(f)).filter((q) => words.test(q) && !/^(скрипт|код|сервер|порт|терминал|консоль|в фоне)$/.test(q.trim()));
     assert.deepEqual(bad, [], f);
   }
@@ -407,4 +408,65 @@ test('без сторонних плагинов; design.md только в те
   const d = read('tools/design.md');
   const foreign = d.match(/плагин|plugin|скилл|skill|tailwind|basecoat|chart\.js|https?:|rgb\(|font-family|#[0-9a-f]{3,8}\b|\bQ\d+\b/gi);
   assert.equal(foreign, null, `в tools/design.md: ${foreign}`);
+});
+
+// Публикация сервисов: скиллы подключения и публикации, правила вида web, строки в правилах кабинета.
+test('публикация: скиллы kabinet-podkluchi-publikaciyu и kabinet-opublikuy, команды кабинета и коннекторы', () => {
+  const pod = read(`${USER_SKILLS}kabinet-podkluchi-publikaciyu/SKILL.md`);
+  const pub = read(`${USER_SKILLS}kabinet-opublikuy/SKILL.md`);
+  for (const text of [pod, pub]) {
+    for (const must of ['{{KABINET}}', 'AI_CABINET_DIR', "'Documents','ai-cabinet'", "'Документы','ai-cabinet'", '**Allow** (разрешить)', 'Cannot find module']) {
+      assert.ok(text.includes(must), must);
+    }
+  }
+  assert.match(pod.split('\n---')[0], /«подключи публикацию»/);
+  for (const must of ['node "<кабинет>/tools/check.mjs" --net --json', 'net-publish', 'pushguard', 'node "<кабинет>/tools/init.mjs"',
+    'node "<кабинет>/tools/web.mjs" save-account --github', 'list_teams', 'defaultTeamId', 'git_namespaces', '"user"', 'list_organizations',
+    'get_cost', 'https://github.com/apps/vercel/installations/new', 'get_me']) {
+    assert.ok(pod.includes(must), `подключи публикацию: нет ${must}`);
+  }
+  const head = pub.split('\n---')[0];
+  for (const phrase of ['«опубликуй сервис»', '«смени код доступа»', '«смени ключ базы»', '«верни как было»']) assert.ok(head.includes(phrase), phrase);
+  assert.match(head, /Не запускай на «обнови кабинет», «добавь в кабинет»/);
+  for (const sub of ['status', 'check', 'pii', 'secret', 'code', 'dev', 'migrate-plan']) {
+    assert.ok(pub.includes(`node "<кабинет>/tools/web.mjs" ${sub} "<проект>"`), `web.mjs ${sub}`);
+  }
+  for (const must of ['create_project', 'confirm_cost', 'get_project', 'restore_project', 'pause_project', 'list_projects', 'execute_sql',
+    'apply_migration', 'list_migrations', 'create_repository', 'push_files', 'https://github.com/new?name=', 'create_git_project',
+    'create_project_env', '`upsert: "true"`', '"sensitive"', 'list_deployments', 'list_deployment_events', 'web_fetch_vercel_url',
+    'aws-0-', 'aws-1-', 'do-perevoda', 'cookie_secret', '`private: true`']) {
+    assert.ok(pub.includes(must), `опубликуй: нет ${must}`);
+  }
+  // Один вопрос перевода (продуктовое ТЗ 13.3) и окна Р20, Р22 дословно.
+  assert.ok(pub.includes('«Сервис сейчас считает файлы на вашем компьютере. Чтобы коллеги открывали его по ссылке, перенесу данные в базу, а расчёт и страницу в интернет-версию. На компьютере всё продолжит работать. Переносим?»'));
+  assert.ok(pub.includes('«Да (рекомендую)»') && pub.includes('«Обезличить (рекомендую)»') && pub.includes('«Оставить сервис на компьютере»') && pub.includes('«Отложить публикацию»'));
+  assert.ok(pub.includes('больше не повторяешь'), 'ключи после записи в Vercel не повторяются');
+  const nov = read(`${USER_SKILLS}kabinet-novyi-servis/SKILL.md`);
+  assert.ok(nov.includes('«Где будет работать сервис?»') && nov.includes('«Для коллег по ссылке в интернете (рекомендую)»') && nov.includes('«Только на моём компьютере»'));
+  assert.ok(nov.includes('--kind web') && nov.includes('«подключи публикацию»') && nov.includes('«опубликуй сервис»'));
+  const rules = read('CLAUDE.md');
+  assert.match(rules, /\| «подключи публикацию»[^\n]*kabinet-podkluchi-publikaciyu/);
+  assert.match(rules, /\| «опубликуй сервис», «смени код доступа»[^\n]*kabinet-opublikuy/);
+  assert.ok(rules.includes('templates/user-skills/kabinet-podkluchi-publikaciyu/SKILL.md'));
+  const svc = rules.split(/\n## /).find((s) => s.startsWith('Сервисы-проекты')) ?? '';
+  for (const must of ['`web`', 'персональных данных', 'Единственное исключение', 'kabinet-opublikuy']) assert.ok(svc.includes(must), `Сервисы-проекты: ${must}`);
+  const proj = read('templates/service-project/CLAUDE.md').replace(/\r\n/g, '\n');
+  assert.ok(proj.includes('## Публикация в интернет') && proj.includes('kabinet-opublikuy'));
+});
+
+test('шаблон веб-сервиса: правила проекта вида web, уроки последним разделом', () => {
+  const T = 'templates/web-service/';
+  assert.ok(files.includes(`${T}CLAUDE.md`), 'нет правил проекта вида web');
+  const rules = read(`${T}CLAUDE.md`).replace(/\r\n/g, '\n');
+  for (const must of ['## Уроки', 'Уроков пока нет.', 'известный ответ', 'до слова «готово»', '`python lib/read_table.py "input/<файл>" --rows 5`',
+    'serve', 'StopRun', 'read_upload', 'query', 'execute', 'insert_rows', 'transaction', '%s', '%(имя)s', '`app`', 'db/NNN_<что>.sql',
+    'Старые файлы не правь', 'kabinet.table', 'kabinet.toast', '`api(имя, данные, файл)`', 'lib/ui.md', 'lib/design.md', 'CDN', 'код доступа',
+    'персональных данных нет', 'Модели (Claude) в этом сервисе нет', 'Одно исключение', '`.env`', 'не открываешь',
+    'node "<кабинет>/tools/web.mjs" dev "."', 'kabinet-opublikuy', '«опубликуй сервис»', '«покажи сервис»', 'subprocess', 'eval']) {
+    assert.ok(rules.includes(must), `в правилах веб-сервиса нет ${must}`);
+  }
+  assert.equal(rules.trimEnd().split('\n## ').at(-1).split('\n')[0], 'Уроки');
+  // Заглушка «Уроков» та же, что в правилах проекта сервиса: upgrade переносит раздел целиком.
+  const lessons = (t) => t.replace(/\r\n/g, '\n').split('\n## Уроки\n')[1];
+  assert.equal(lessons(rules), lessons(read('templates/service-project/CLAUDE.md')));
 });

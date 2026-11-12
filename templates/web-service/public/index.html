@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Новый сервис</title>
+  <!-- Набор интерфейса кабинета: копия в public/ui (её кладёт кабинет), пути только относительные. -->
+  <link rel="stylesheet" href="ui/basecoat.css">
+  <link rel="stylesheet" href="ui/brand.css">
+  <link rel="stylesheet" href="ui/kabinet.css">
+  <script src="ui/kabinet.js"></script>
+  <script src="ui/tailwind.js"></script>
+  <script src="ui/basecoat.js" defer></script>
+</head>
+<body>
+  <main class="mx-auto max-w-5xl px-4 py-6 flex flex-col gap-6">
+    <header>
+      <h1 class="text-2xl font-semibold" id="title">Новый сервис</h1>
+      <p class="text-muted-foreground text-sm">Пример: таблица записей из базы, форма и загрузка Excel. Claude заменит его на ваш сервис.</p>
+    </header>
+
+    <!-- Экран кода доступа: появляется, когда сервис ответил «Нужен код доступа». -->
+    <div class="card max-w-md" id="login" hidden>
+      <header><h2>Код доступа</h2><p>Код из трёх слов вам передал автор сервиса.</p></header>
+      <section>
+        <form class="form grid gap-3" id="login-form">
+          <input class="input" id="code" type="text" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="например: river-lamp-sun" required>
+          <button class="btn" type="submit">Войти</button>
+          <p class="text-sm text-bad" id="login-error" hidden></p>
+        </form>
+      </section>
+    </div>
+
+    <div id="app" class="flex flex-col gap-6" hidden>
+      <div class="card">
+        <header><h2>Новая запись</h2></header>
+        <section>
+          <form class="form flex flex-wrap gap-3 items-end" id="add-form">
+            <label class="grid gap-1">Название <input class="input" name="nazvanie" required></label>
+            <label class="grid gap-1">Сумма <input class="input" name="summa" inputmode="decimal"></label>
+            <button class="btn" type="submit">Добавить</button>
+          </form>
+        </section>
+      </div>
+      <div class="card">
+        <header><h2>Загрузить Excel</h2><p>Столбцы «Название» и «Сумма». Файл не сохраняется, строки попадают в таблицу.</p></header>
+        <section>
+          <input class="input" type="file" id="file" accept=".xlsx,.csv">
+        </section>
+      </div>
+      <div class="card"><section id="table"></section></div>
+    </div>
+  </main>
+  <script>
+    // Действие сервиса: POST api/<имя>. Ответ 401: показать экран кода и повторить после входа.
+    let retry = null;
+    async function api(name, payload, file) {
+      const opts = file
+        ? { method: 'POST', headers: { 'Content-Type': 'application/octet-stream', 'X-File-Name': encodeURIComponent(file.name) }, body: file }
+        : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload || {}) };
+      const r = await fetch('api/' + encodeURIComponent(name), opts);
+      const body = await r.json().catch(() => ({}));
+      if (r.status === 401) {
+        showLogin();
+        return new Promise((resolve, reject) => { retry = () => api(name, payload, file).then(resolve, reject); });
+      }
+      if (!r.ok) throw new Error(body.error || 'Сервис не ответил (' + r.status + ')');
+      return body;
+    }
+
+    function showLogin() {
+      document.getElementById('app').hidden = true;
+      document.getElementById('login').hidden = false;
+      document.getElementById('code').focus();
+    }
+
+    document.getElementById('login-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const err = document.getElementById('login-error');
+      err.hidden = true;
+      const r = await fetch('api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code: document.getElementById('code').value }) });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        err.textContent = body.error || 'Код не подходит';
+        err.hidden = false;
+        return;
+      }
+      document.getElementById('login').hidden = true;
+      document.getElementById('app').hidden = false;
+      const again = retry;
+      retry = null;
+      if (again) again();
+      else load();
+    });
+
+    async function load() {
+      const data = await api('zapisi');
+      document.getElementById('app').hidden = false;
+      kabinet.table('#table', data);
+    }
+
+    document.getElementById('add-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const f = new FormData(e.target);
+      try {
+        await api('dobav', { nazvanie: f.get('nazvanie'), summa: f.get('summa') });
+        e.target.reset();
+        await load();
+        kabinet.toast('Запись добавлена');
+      } catch (x) {
+        kabinet.toast(x.message, 'error');
+      }
+    });
+
+    document.getElementById('file').addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      try {
+        const r = await api('zagruzka', null, file);
+        await load();
+        kabinet.toast('Загружено строк: ' + kabinet.number(r.added));
+      } catch (x) {
+        kabinet.toast(x.message, 'error');
+      }
+      e.target.value = '';
+    });
+
+    kabinet.ready(() => load().catch((x) => kabinet.toast(x.message, 'error')));
+  </script>
+</body>
+</html>

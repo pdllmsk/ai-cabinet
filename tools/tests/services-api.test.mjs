@@ -2,14 +2,15 @@
 import test, { after, before } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { copyDir } from './copy-dir.mjs';
 import { createCabinetServer, listenFirstFree } from '../serve.mjs';
 import { attachServices, serviceRoute } from '../services-api.mjs';
-import { addService } from '../services.mjs';
+import { addService, createProject } from '../services.mjs';
+import { stopDev } from '../web.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const TOKEN = '5e7a1c9d0b2f4e6a8c1d3f5a7b9c0e2d';
@@ -299,4 +300,110 @@ test('attachServices: повторное подключение ничего н�
   assert.equal(serviceRoute('/api/services', TOKEN), null);
   assert.equal(serviceRoute(`${T}/api/processes`, TOKEN), null);
   assert.equal(serviceRoute(`${T}/api%2Fservices`, TOKEN), null);
+});
+
+// ---------- сервис для интернета (kind web): карточка сайта, код доступа, страница на компьютере ----------
+
+function journalEvents() {
+  const dir = join(cab, 'journal');
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir)
+    .flatMap((n) => readFileSync(join(dir, n), 'utf8').split('\n'))
+    .filter(Boolean)
+    .map((l) => JSON.parse(l));
+}
+
+test('web: карточка сайта вместо page/, итог до и после публикации, без «Запустить»', async () => {
+  copyDir(join(ROOT, 'templates', 'web-service'), join(cab, 'templates', 'web-service'));
+  const made = createProject(cab, 'Заявки', { kind: 'web', git: false });
+  dirs.zayavki = made.dir;
+  addService(cab, made.dir);
+  let item = (await request('GET', `${T}/api/services`)).json.find((x) => x.slug === 'zayavki');
+  assert.equal(item.kind, 'page');
+  assert.equal(item.web, true);
+  assert.equal(item.run, false);
+  assert.equal(item.page, 's/zayavki/');
+  assert.equal(item.result.summary, 'Не опубликован: скажите «опубликуй сервис» в папке сервиса');
+  // s/<slug>/ и s/<slug>/page ведут на page/, там карточка сайта (файл курса tools/web-card.html).
+  for (const path of [`${T}/s/zayavki/`, `${T}/s/zayavki`, `${T}/s/zayavki/page`]) {
+    const r = await request('GET', path);
+    assert.equal(r.status, 302, path);
+    assert.equal(r.headers.location, `${T}/s/zayavki/page/`);
+  }
+  const card = await request('GET', `${T}/s/zayavki/page/`);
+  assert.equal(card.status, 200);
+  assert.match(card.headers['content-type'], /text\/html/);
+  assert.equal(card.headers['content-security-policy'], "frame-ancestors 'self'");
+  assert.equal(card.body, readFileSync(join(cab, 'tools', 'web-card.html'), 'utf8'));
+  for (const text of ['Открыть сайт', 'Показать код', 'Показать на компьютере', 'Изменить сервис: кнопка «Редактировать» на карточке', '../../../ui/kabinet.css', '../../../api/services']) {
+    assert.ok(card.body.includes(text), text);
+  }
+  assert.doesNotMatch(card.body, /[\u2012-\u2015]/, 'без тире');
+  assert.equal((await request('GET', `${T}/s/zayavki/page/index.html`)).status, 200);
+  // Файлы проекта через карточку не отдаются: ни public, ни page, ни api.
+  for (const path of ['page/index2.html', 'page/app.js', 'public/index.html', 'page/../service.json', 'service.json']) {
+    assert.equal((await request('GET', `${T}/s/zayavki/${path}`)).status, 404, path);
+  }
+  assert.equal((await request('GET', `${T}/s/zayavki/api/index.py`)).status, 405, 'адреса api/ только для действий (POST)');
+  // Действия сайта кабинет не запускает: они работают на сайте (и на компьютере через «Показать на компьютере»).
+  const call = await request('POST', `${T}/s/zayavki/api/zapisi`, RUN_HEADERS, '{}');
+  assert.equal(call.status, 404);
+  assert.equal(call.json.code, 'EWEB');
+  // Запуска у сайта нет: 400 с причиной.
+  const run = await request('POST', `${T}/api/services/run`, RUN_HEADERS, JSON.stringify({ slug: 'zayavki' }));
+  assert.equal(run.status, 400);
+  assert.equal(run.json.code, 'EWEB');
+  // После публикации: адрес в итоге и в поле url.
+  const sj = JSON.parse(readFileSync(join(made.dir, 'service.json'), 'utf8'));
+  writeFileSync(join(made.dir, 'service.json'), JSON.stringify({ ...sj, publish: { url: 'https://zayavki-aigul.vercel.app', published_at: '2026-11-12T06:30:00+05:00' } }, null, 2));
+  item = (await request('GET', `${T}/api/services`)).json.find((x) => x.slug === 'zayavki');
+  assert.equal(item.url, 'https://zayavki-aigul.vercel.app');
+  assert.equal(item.result.status, 'green');
+  assert.equal(item.result.summary, 'Опубликован: https://zayavki-aigul.vercel.app');
+  assert.equal(item.result.updated_at, '2026-11-12T06:30:00+05:00');
+});
+
+test('web: код доступа только с заголовком X-Cabinet; нет кода или не сайт: 404; запись в журнал', async () => {
+  const path = `${T}/api/services/zayavki/code`;
+  assert.equal((await request('GET', path)).status, 403);
+  assert.equal((await request('GET', path, { 'X-Cabinet': '0' })).status, 403);
+  const none = await request('GET', path, { 'X-Cabinet': '1' });
+  assert.equal(none.status, 404);
+  assert.match(none.json.error, /опубликуй сервис/);
+  writeFileSync(join(dirs.zayavki, '.env'), 'SERVICE_ACCESS_CODE=kot-dom-les\nSERVICE_ACCESS_CODE_HASH=x\n');
+  const ok = await request('GET', path, { 'X-Cabinet': '1' });
+  assert.equal(ok.status, 200);
+  assert.deepEqual(ok.json, { code: 'kot-dom-les' });
+  assert.equal((await request('GET', `${T}/api/services/svodka/code`, { 'X-Cabinet': '1' })).status, 404);
+  assert.equal((await request('GET', `${T}/api/services/net-takogo/code`, { 'X-Cabinet': '1' })).status, 404);
+  assert.equal((await request('POST', path, RUN_HEADERS, '{}')).status, 405);
+  // Без токена страницы: 403, как у всего кабинета.
+  assert.equal((await request('GET', '/api/services/zayavki/code', { 'X-Cabinet': '1' })).status, 403);
+  const ev = journalEvents().filter((e) => e.event === 'web.code.show' && e.service === 'zayavki');
+  assert.deepEqual(ev.map((e) => e.ok), [false, true]);
+  assert.ok(!JSON.stringify(journalEvents()).includes('kot-dom-les'), 'кода в журнале нет');
+});
+
+test('web: «Показать на компьютере» запускает страницу один раз, повтор отдаёт тот же адрес', { timeout: 90000 }, async () => {
+  const path = `${T}/api/services/zayavki/dev`;
+  assert.equal((await request('GET', path)).status, 405);
+  assert.equal((await request('POST', path, { 'Content-Type': 'application/json' }, '{}')).status, 403);
+  assert.equal((await request('POST', `${T}/api/services/svodka/dev`, RUN_HEADERS, '{}')).status, 404);
+  try {
+    const first = await request('POST', path, RUN_HEADERS, '{}');
+    assert.equal(first.status, 200, first.body);
+    assert.match(first.json.url, /^http:\/\/127\.0\.0\.1:\d+\/$/);
+    assert.equal(first.json.already, false);
+    const state = JSON.parse(readFileSync(join(dirs.zayavki, 'output', '.web-dev.json'), 'utf8'));
+    const second = await request('POST', path, RUN_HEADERS, '{}');
+    assert.equal(second.status, 200, second.body);
+    assert.deepEqual(second.json, { url: first.json.url, already: true });
+    assert.equal(JSON.parse(readFileSync(join(dirs.zayavki, 'output', '.web-dev.json'), 'utf8')).pid, state.pid, 'второй процесс не запущен');
+    const health = await new Promise((done) => http.get(`${first.json.url}api/health`, (r) => { r.resume(); done(r.statusCode); }).on('error', () => done(0)));
+    assert.equal(health, 200);
+    const ev = journalEvents().filter((e) => e.event === 'web.dev.start' && e.service === 'zayavki');
+    assert.deepEqual(ev.map((e) => [e.ok, e.already]), [[true, false], [true, true]]);
+  } finally {
+    await stopDev(dirs.zayavki);
+  }
 });

@@ -8,12 +8,17 @@
 // трогаем. В SKILL.md вместо {{KABINET}} подставляется путь к этому кабинету. Их же ставят update.mjs (после
 // обновления) и check.mjs (проверка сетапа на первом занятии).
 //
+// После скиллов init обновляет проекты сервисов по новой версии кабинета (services.mjs upgradeAll: правила с
+// «Уроками» человека, настройки, lib, git) и закрывает публикацию кабинета в шаблон курса (pushguard.mjs).
+// Сбой здесь не меняет код выхода: файлы участника и скиллы важнее.
+//
 // Запуск: node tools/init.mjs [--json | --report]. Его же вызывают check.mjs, serve.mjs и update.mjs.
 // --json: только список созданных файлов в JSON (его читали прежние версии update.mjs), скиллы ставятся молча.
-// --report: {"created": [...], "skills": {...}} в JSON (его читает update.mjs).
+// --report: {"created": [...], "skills": {...}, "services": {message, results}, "pushguard": {status, message}}
+// в JSON (его читает update.mjs).
 import { constants, copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isMain } from './is-main.mjs';
 
@@ -122,25 +127,58 @@ export function installUserSkills(root, { env = process.env, home = homedir() } 
 }
 
 // Одна строка человеку.
+export const SKILL_PHRASES = '«новый сервис», «добавь в кабинет», «подключи публикацию» и «опубликуй сервис»';
+
 export function skillsMessage({ status, dir, error }) {
-  const what = 'Скиллы «новый сервис» и «добавь в кабинет»';
+  const what = `Скиллы ${SKILL_PHRASES}`;
   if (status === 'installed') return `${what} поставлены в папку Claude: теперь они работают в любой папке.`;
   if (status === 'updated') return `${what} обновлены в папке Claude.`;
   if (status === 'same') return `${what} на месте.`;
-  if (status === 'error') return `Не удалось поставить скиллы «новый сервис» и «добавь в кабинет» в папку ${dir} (${error}). Покажите это сообщение тренеру.`;
+  if (status === 'error') return `Не удалось поставить скиллы ${SKILL_PHRASES} в папку ${dir} (${error}). Покажите это сообщение тренеру.`;
   return '';
 }
 
-function main() {
-  const root = fileURLToPath(new URL('..', import.meta.url));
+const why = (e) => String(e?.code ?? e?.message ?? e);
+
+// Проекты сервисов по новой версии кабинета: { message, results }. Не бросает.
+export async function upgradeServices(root) {
+  try {
+    const { upgradeAll } = await import('./services.mjs');
+    const r = upgradeAll(root);
+    return { message: r.message, results: r.results };
+  } catch (e) {
+    return { message: `Правила сервисов не обновлены (${why(e)}). Покажите это сообщение тренеру.`, results: [] };
+  }
+}
+
+// Блок публикации кабинета в шаблон курса: { status, message }. Не бросает.
+export async function guardPush(root) {
+  try {
+    const { ensurePushGuard } = await import('./pushguard.mjs');
+    const r = ensurePushGuard(root);
+    return { status: r.status, message: r.message };
+  } catch (e) {
+    return { status: 'error', message: `Не удалось закрыть публикацию кабинета (${why(e)}). Покажите это сообщение тренеру.` };
+  }
+}
+
+async function main() {
+  const root = resolve(fileURLToPath(new URL('..', import.meta.url)));
   const created = ensureParticipantFiles(root);
   const skills = installUserSkills(root);
-  if (process.argv.includes('--report')) return console.log(JSON.stringify({ created, skills }));
+  const services = await upgradeServices(root);
+  const pushguard = await guardPush(root);
+  if (process.argv.includes('--report')) return console.log(JSON.stringify({ created, skills, services, pushguard }));
   if (process.argv.includes('--json')) return console.log(JSON.stringify(created));
   console.log(created.length ? `Созданы файлы: ${created.join(', ')}` : 'Все файлы участника на месте, ничего не создано.');
   if (skills.message) console.log(skills.message);
+  if (services.message) console.log(services.message);
+  if (pushguard.status === 'set' || pushguard.status === 'error') console.log(pushguard.message);
 }
 
 if (isMain(import.meta.url)) {
-  main();
+  main().catch((e) => {
+    console.error(`Не удалось подготовить кабинет (${why(e)}). Покажите это сообщение тренеру.`);
+    process.exitCode = 1;
+  });
 }

@@ -1,0 +1,45 @@
+{
+  "model": "sonnet",
+  "language": "russian",
+  "autoMemoryEnabled": false,
+  "env": {
+    "AI_SERVICE_PROJECT": "1",
+    "AI_SERVICE_KIND": "web",
+    "PYTHONUTF8": "1",
+    "PYTHONIOENCODING": "utf-8",
+    "CLAUDE_CODE_DISABLE_EXPLORE_PLAN_AGENTS": "1"
+  },
+  "permissions": {
+    "defaultMode": "acceptEdits",
+    "allow": [
+      "Bash(node \"*tools/web.mjs\"*)",
+      "Bash(node \"*tools/services.mjs\"*)",
+      "Bash(python lib/web_dev.py*)",
+      "Bash(py lib/web_dev.py*)",
+      "Bash(python3 lib/web_dev.py*)",
+      "Bash(python lib/read_table.py*)",
+      "Bash(py lib/read_table.py*)",
+      "Bash(python3 lib/read_table.py*)",
+      "Bash(git status*)",
+      "Bash(git add*)",
+      "Bash(git commit*)",
+      "Bash(git push*)",
+      "Bash(git log*)",
+      "Bash(git diff*)"
+    ],
+    "deny": [
+      "Read(./.env)",
+      "Read(./.env.*)",
+      "Read(./**/.env)",
+      "Read(./**/.env.*)",
+      "Edit(./lib/**)",
+      "Edit(./public/ui/**)",
+      "Edit(./.claude/settings.json)",
+      "Edit(./vercel.json)",
+      "Bash(rm -rf *)",
+      "Bash(git push --force*)",
+      "Bash(git push -f*)",
+      "Agent(Explore)"
+    ]
+  }
+}

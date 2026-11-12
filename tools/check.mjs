@@ -6,6 +6,9 @@ import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isMain } from './is-main.mjs';
 import { ensureParticipantFiles, installUserSkills } from './init.mjs';
+import { NO_PUSH_URL, TEMPLATE_REPO_RE, ensurePushGuard, pushGuardState } from './pushguard.mjs';
+import net from 'node:net';
+import https from 'node:https';
 import { randomBytes } from 'node:crypto';
 import { createSiteServer, describeListenError } from './serve.mjs';
 
@@ -315,6 +318,69 @@ async function checkPip(exec, py) {
   return fail('net-pip', 'Загрузка пакетов pip не работает', netHint('pip', r));
 }
 
+// Блок пуша в шаблон курса (tools/pushguard.mjs). Строка только у кабинета из шаблона курса с git.
+export function pushGuardResult(state) {
+  if (!state?.origin || !TEMPLATE_REPO_RE.test(state.origin)) return null;
+  if (state.pushurl === NO_PUSH_URL && state.hook) return ok('pushguard', 'Публикация кабинета закрыта');
+  return fail('pushguard', 'Публикация кабинета не закрыта', 'скажите Claude «обнови кабинет»; не помогло, покажите это тренеру');
+}
+
+// Адреса для публикации сервисов (GitHub, Vercel, Supabase). Пул базы Supabase: порт 6543.
+export const PUBLISH_HOSTS = [
+  { host: 'github.com', port: 443 },
+  { host: 'api.github.com', port: 443 },
+  { host: 'vercel.com', port: 443 },
+  { host: 'api.vercel.com', port: 443 },
+  { host: 'supabase.com', port: 443 },
+  { host: 'aws-0-eu-central-1.pooler.supabase.com', port: 6543, tcp: true },
+];
+
+// Доступен ли адрес: HTTPS-ответ любого кода или TCP-соединение. { ok, error }.
+export function probeHost({ host, port, tcp }, timeout = 7000) {
+  return new Promise((done) => {
+    const finish = (r) => done(r);
+    try {
+      if (tcp) {
+        const s = net.connect({ host, port, timeout });
+        s.once('connect', () => {
+          s.destroy();
+          finish({ ok: true });
+        });
+        s.once('timeout', () => {
+          s.destroy();
+          finish({ ok: false, error: 'ETIMEDOUT' });
+        });
+        s.once('error', (e) => finish({ ok: false, error: e.code ?? e.message }));
+        return;
+      }
+      const req = https.request({ host, port, method: 'HEAD', path: '/', timeout }, (res) => {
+        res.resume();
+        finish({ ok: true });
+      });
+      req.once('timeout', () => req.destroy(Object.assign(new Error('ETIMEDOUT'), { code: 'ETIMEDOUT' })));
+      req.once('error', (e) => finish({ ok: false, error: e.code ?? e.message }));
+      req.end();
+    } catch (e) {
+      finish({ ok: false, error: e.code ?? e.message });
+    }
+  });
+}
+
+const hostName = (h) => (h.tcp ? `${h.host.replace(/^aws-0-[^.]+/, '*')}:${h.port}` : h.host);
+
+// Строка «Связь с GitHub, Vercel, Supabase»: не валит итог (публикацию подключают позже), подсказка для ИТ.
+export async function checkPublishNet(probe = probeHost) {
+  const res = await Promise.all(PUBLISH_HOSTS.map(async (h) => ({ h, r: await probe(h) })));
+  const bad = res.filter((x) => !x.r?.ok);
+  const title = 'Связь с GitHub, Vercel, Supabase для публикации сервисов';
+  if (!bad.length) return { ...ok('net-publish', title), hosts: res.map((x) => ({ host: hostName(x.h), ok: true })) };
+  const list = bad.map((x) => hostName(x.h)).join(', ');
+  return {
+    ...warn('net-publish', `${title}: нет связи с ${list}`, `попросите ИТ открыть адреса github.com, api.github.com, vercel.com, *.vercel.app, api.vercel.com, supabase.com, *.supabase.co и *.pooler.supabase.com (порт 6543)`),
+    hosts: res.map((x) => ({ host: hostName(x.h), ok: Boolean(x.r?.ok), error: x.r?.error ?? null })),
+  };
+}
+
 export async function runChecks({
   cwd = fileURLToPath(new URL('..', import.meta.url)),
   net = false,
@@ -322,6 +388,8 @@ export async function runChecks({
   platform = process.platform,
   nodeVersion = process.version,
   env = process.env,
+  pushGuard = (dir) => pushGuardState(dir),
+  probe = probeHost,
 } = {}) {
   cwd = resolve(cwd);
   const py = await detectPython(exec, platform);
@@ -336,10 +404,13 @@ export async function runChecks({
     await checkLocalhost(cwd),
     await checkInput(cwd),
   ];
+  const guard = pushGuardResult(pushGuard(cwd));
+  if (guard) results.push(guard);
   if (net) {
     results.push(await checkGitRemote(exec, platform));
     results.push(await checkNpm(exec));
     results.push(await checkPip(exec, py));
+    results.push(await checkPublishNet(probe));
   }
   return results;
 }
@@ -375,6 +446,8 @@ async function main() {
   // Скиллы «новый сервис» и «добавь в кабинет» для проектов сервисов (работают в любой папке): молча, проверка
   // сетапа на первом занятии их ставит. Не вышло: поставит «обнови кабинет» или node tools/init.mjs.
   installUserSkills(root);
+  // Кабинет курса не публикуется: блок пуша в шаблон (повторно ничего не меняет).
+  ensurePushGuard(root);
   const results = await runChecks({ net: args.includes('--net') });
   console.log(args.includes('--json') ? JSON.stringify(results, null, 2) : formatReport(results));
   process.exitCode = exitCodeFor(results);

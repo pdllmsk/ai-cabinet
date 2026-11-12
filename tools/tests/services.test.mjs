@@ -3,7 +3,8 @@
 import test, { after, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -11,16 +12,33 @@ import { copyDir } from './copy-dir.mjs';
 import {
   addService,
   checkProject,
+  createProject,
+  describeService,
+  findProjects,
   isProjectOutputFile,
   LIB_FILES,
+  LIB_FILES_WEB,
   listServices,
+  mergeLessons,
   readRegistry,
   slugify,
   startServiceRun,
+  TEMPLATE_VERSION,
+  upgradeAll,
+  upgradeProject,
   validateServiceResult,
 } from '../services.mjs';
+import { LOCK_FILE } from '../processes.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
+
+// Настройки git разработчика не влияют на тест: пустой глобальный конфиг (без имени и почты) для этого процесса
+// и для команд, которые он запускает.
+const GITCFG = mkdtempSync(join(tmpdir(), 'gitcfg-'));
+writeFileSync(join(GITCFG, 'config'), '');
+process.env.GIT_CONFIG_GLOBAL = join(GITCFG, 'config');
+process.env.GIT_CONFIG_NOSYSTEM = '1';
+after(() => rmSync(GITCFG, { recursive: true, force: true }));
 
 const MAIN_PY = (title = 'Сводка') => `import json
 from datetime import datetime
@@ -451,4 +469,319 @@ test('настоящий шаблон templates/service-project (если уже
 test('кабинет разрешает node tools/services.mjs в settings.json', () => {
   const s = JSON.parse(readFileSync(join(ROOT, '.claude', 'settings.json'), 'utf8'));
   assert.ok(s.permissions.allow.includes('Bash(node tools/services.mjs*)'));
+});
+
+// ---------- обновление проектов после «обнови кабинет» (upgrade, upgrade-all) ----------
+
+// Отдельный кабинет со своей папкой «Сервисы»: upgrade-all обходит все проекты рядом с кабинетом.
+function freshCabinet(name) {
+  const profile = join(base, name);
+  const c = join(profile, 'ai-cabinet');
+  mkdirSync(join(c, 'me'), { recursive: true });
+  copyDir(join(cab, 'tools'), join(c, 'tools'));
+  copyDir(join(cab, 'templates', 'service-project'), join(c, 'templates', 'service-project'));
+  copyDir(join(ROOT, 'templates', 'web-service'), join(c, 'templates', 'web-service'));
+  return { c, svcHome: join(profile, 'Сервисы') };
+}
+
+function oldProject(svcHome, folder, service, files = {}) {
+  const dir = join(svcHome, folder);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, 'service.json'), typeof service === 'string' ? service : JSON.stringify(service, null, 2));
+  for (const [rel, text] of Object.entries(files)) {
+    mkdirSync(dirname(join(dir, rel)), { recursive: true });
+    writeFileSync(join(dir, rel), text);
+  }
+  return realpathSync(dir);
+}
+
+// Хэши файлов папки (путь от неё): так видно, что файлы человека не тронуты ни на байт.
+function hashes(dir, keep) {
+  const out = {};
+  const walk = (abs, rel) => {
+    for (const e of readdirSync(abs, { withFileTypes: true })) {
+      const r = rel ? `${rel}/${e.name}` : e.name;
+      if (!keep(r)) continue;
+      if (e.isDirectory()) walk(join(abs, e.name), r);
+      else out[r] = createHash('sha256').update(readFileSync(join(abs, e.name))).digest('hex');
+    }
+  };
+  walk(dir, '');
+  return out;
+}
+
+const gitOut = (dir, ...args) => spawnSync('git', args, { cwd: dir, encoding: 'utf8' }).stdout.trim();
+const listFiles = (dir) => (existsSync(dir) ? readdirSync(dir).sort() : []);
+const OLD_RUN = { name: 'Сводка', about: 'Сумма по точкам', kind: 'run', run: 'main.py', result: 'output/result.json', input: 'input/', page: null, moe_pole: { a: 1 } };
+// «Уроки» человека: CRLF, эмодзи, без перевода строки в конце: всё должно дойти байт в байт.
+const LESSONS = '## Уроки\r\n\r\n- 10.11: возвраты вычитаю 🙂\r\n- 11.11: «Точка-01» без НДС';
+
+test('upgrade: новые правила, «Уроки» байт в байт, копии в .claude/backup, settings, .gitignore, git main, template_version', () => {
+  const { c, svcHome } = freshCabinet('upg-1');
+  const oldClaude = `# Правила проекта сервиса (вчерашние)\n\nСтарый текст.\n\n${LESSONS}`;
+  const dir = oldProject(svcHome, 'svodka', OLD_RUN, {
+    'CLAUDE.md': oldClaude,
+    'main.py': MAIN_PY(),
+    'input/продажи.csv': 'Точка;Сумма\n1;2\n',
+    'output/result.json': '{}',
+    '.env': 'MOY_KLYUCH=секрет\n',
+    '.gitignore': '# моё\nmoi-fayl.txt\n.env*\n',
+    '.claude/settings.json': '{"old": true}\n',
+    '.claude/settings.local.json': '{"moe": true}\n',
+  });
+  const own = (r) => ['main.py', 'input', 'output', '.env', '.claude', '.claude/settings.local.json'].some((p) => r === p || r.startsWith(`${p}/`)) && r !== '.claude/settings.json' && !r.startsWith('.claude/backup');
+  const before = hashes(dir, own);
+  const r = upgradeProject(c, dir);
+  assert.equal(r.error, undefined, r.error);
+  assert.equal(r.name, 'Сводка');
+  for (const x of ['.gitignore', 'CLAUDE.md', '.claude/settings.json', 'service.json', 'lib/llm.py']) assert.ok(r.changed.includes(x), `${x}: ${r.changed}`);
+  // Правила: шаблон (в нём «Уроков» нет: раздел человека после пустой строки), затем раздел человека как был.
+  const tpl = readFileSync(join(c, 'templates', 'service-project', 'CLAUDE.md'), 'utf8');
+  const now = readFileSync(join(dir, 'CLAUDE.md'));
+  assert.ok(now.equals(Buffer.from(`${tpl.trimEnd()}\n\n${LESSONS}`)), now.toString());
+  // Копии: старые правила и настройки в .claude/backup.
+  const backups = listFiles(join(dir, '.claude', 'backup'));
+  const claudeCopy = backups.find((n) => /^CLAUDE-\d{8}-\d{4}\.md$/.test(n));
+  const settingsCopy = backups.find((n) => /^settings-\d{8}-\d{4}\.json$/.test(n));
+  assert.ok(claudeCopy && settingsCopy, backups.join(', '));
+  assert.equal(readFileSync(join(dir, '.claude', 'backup', claudeCopy), 'utf8'), oldClaude);
+  assert.equal(readFileSync(join(dir, '.claude', 'backup', settingsCopy), 'utf8'), '{"old": true}\n');
+  assert.equal(readFileSync(join(dir, '.claude', 'settings.json'), 'utf8'), readFileSync(join(c, 'templates', 'service-project', '.claude', 'settings.json'), 'utf8'));
+  // .gitignore: свои строки на месте, недостающие из шаблона дописаны, без повторов.
+  const gi = readFileSync(join(dir, '.gitignore'), 'utf8');
+  assert.ok(gi.startsWith('# моё\nmoi-fayl.txt\n.env*\n'), gi);
+  for (const line of ['input/*', 'output/*', '__pycache__/']) assert.ok(gi.split('\n').includes(line), line);
+  assert.equal(gi.split('\n').filter((l) => l === '.env*').length, 1);
+  // service.json: порядок полей тот же, версия шаблона в конце.
+  const sj = JSON.parse(readFileSync(join(dir, 'service.json'), 'utf8'));
+  assert.deepEqual(Object.keys(sj), [...Object.keys(OLD_RUN), 'template_version']);
+  assert.equal(sj.template_version, TEMPLATE_VERSION);
+  assert.deepEqual(sj.moe_pole, { a: 1 });
+  // Файлы человека не тронуты ни на байт.
+  assert.deepEqual(hashes(dir, own), before);
+  if (hasGit) {
+    assert.ok(r.changed.includes('git'));
+    assert.equal(gitOut(dir, 'branch', '--show-current'), 'main');
+    assert.equal(gitOut(dir, 'log', '--format=%s'), 'Сервис до обновления кабинета');
+    // Версия «до обновления»: вчерашние правила, без ключей и данных.
+    assert.equal(gitOut(dir, 'show', 'HEAD:CLAUDE.md'), oldClaude.trim());
+    const tracked = gitOut(dir, 'ls-files').split('\n');
+    assert.ok(tracked.includes('main.py'), tracked.join(', '));
+    assert.ok(!tracked.some((f) => f === '.env' || f.includes('input/') || f.includes('output/')), tracked.join(', '));
+  }
+});
+
+test('upgrade: без «Уроков» правила как в шаблоне; повтор ничего не меняет и копий не плодит', () => {
+  const { c, svcHome } = freshCabinet('upg-2');
+  // Настоящий шаблон с разделом «Уроки»: раздел шаблона остаётся, когда у человека его нет.
+  copyDir(join(ROOT, 'templates', 'service-project'), join(c, 'templates', 'service-project'));
+  const dir = oldProject(svcHome, 'bez-urokov', OLD_RUN, { 'CLAUDE.md': '# Старые правила\nбез уроков\n', 'main.py': MAIN_PY() });
+  const r = upgradeProject(c, dir);
+  assert.equal(r.error, undefined, r.error);
+  const tpl = readFileSync(join(c, 'templates', 'service-project', 'CLAUDE.md'));
+  assert.ok(readFileSync(join(dir, 'CLAUDE.md')).equals(tpl));
+  const backups = listFiles(join(dir, '.claude', 'backup'));
+  assert.equal(backups.filter((n) => n.startsWith('CLAUDE-')).length, 1);
+  // Свои уроки в настоящем шаблоне: раздел «Уроки» шаблона заменяется разделом человека.
+  const merged = mergeLessons(Buffer.from('# x\n## Уроки\n- мой урок\n'), tpl).toString();
+  assert.ok(merged.endsWith('## Уроки\n- мой урок\n') && merged.startsWith(tpl.toString().split('## Уроки')[0]));
+  assert.equal(merged.split('## Уроки').length, 2);
+  const again = upgradeProject(c, dir);
+  assert.equal(again.error, undefined, again.error);
+  assert.deepEqual(again.changed, []);
+  assert.deepEqual(listFiles(join(dir, '.claude', 'backup')), backups);
+  assert.ok(readFileSync(join(dir, 'CLAUDE.md')).equals(tpl));
+  if (hasGit) assert.equal(gitOut(dir, 'rev-list', '--count', 'HEAD'), '1');
+});
+
+test('upgrade: идёт расчёт → сервис пропущен, обновится в следующий раз', () => {
+  const { c, svcHome } = freshCabinet('upg-3');
+  const dir = oldProject(svcHome, 'schitaetsya', OLD_RUN, { 'CLAUDE.md': '# Старые\n', 'main.py': MAIN_PY(), 'output/.gitkeep': '' });
+  writeFileSync(join(dir, 'output', LOCK_FILE), JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString(), timeoutMs: 300000 }));
+  const r = upgradeAll(c);
+  assert.equal(r.results.length, 1);
+  assert.equal(r.results[0].skipped, 'идёт расчёт');
+  assert.deepEqual(r.results[0].changed, []);
+  assert.equal(r.message, 'Сервис «Сводка» сейчас считается: обновится при следующем обновлении кабинета.');
+  assert.equal(readFileSync(join(dir, 'CLAUDE.md'), 'utf8'), '# Старые\n');
+  assert.equal(existsSync(join(dir, '.git')), false);
+  rmSync(join(dir, 'output', LOCK_FILE));
+  assert.match(upgradeAll(c).message, /^Обновлены правила в 1 сервисе: Сводка\.$/);
+});
+
+test('upgrade: git на ветке master без origin → main; с origin ветка остаётся', (t) => {
+  if (!hasGit) return t.skip('git нет');
+  const { c, svcHome } = freshCabinet('upg-4');
+  const id = ['-c', 'user.name=Тест', '-c', 'user.email=test@example.com'];
+  const mk = (folder, origin) => {
+    const dir = oldProject(svcHome, folder, OLD_RUN, { 'CLAUDE.md': '# Старые\n', 'main.py': MAIN_PY() });
+    spawnSync('git', ['init', '-q'], { cwd: dir });
+    spawnSync('git', ['symbolic-ref', 'HEAD', 'refs/heads/master'], { cwd: dir });
+    spawnSync('git', ['add', '-A'], { cwd: dir });
+    spawnSync('git', [...id, 'commit', '-q', '-m', 'моя версия'], { cwd: dir });
+    if (origin) spawnSync('git', ['remote', 'add', 'origin', 'https://github.com/aigul/svodka.git'], { cwd: dir });
+    return dir;
+  };
+  const local = mk('master-local', false);
+  const pushed = mk('master-origin', true);
+  const r1 = upgradeProject(c, local);
+  assert.equal(r1.error, undefined, r1.error);
+  assert.ok(r1.changed.includes('git: ветка main'), r1.changed.join(', '));
+  assert.equal(gitOut(local, 'branch', '--show-current'), 'main');
+  assert.equal(gitOut(local, 'log', '--format=%s'), 'моя версия');
+  const r2 = upgradeProject(c, pushed);
+  assert.equal(r2.error, undefined, r2.error);
+  assert.equal(gitOut(pushed, 'branch', '--show-current'), 'master');
+  // Папка из «новый сервис» (git init без версий): появляется первая версия.
+  const fresh = oldProject(svcHome, 'bez-versiy', OLD_RUN, { 'main.py': MAIN_PY() });
+  spawnSync('git', ['init', '-q', '-b', 'main'], { cwd: fresh });
+  assert.equal(upgradeProject(c, fresh).error, undefined);
+  assert.equal(gitOut(fresh, 'log', '--format=%s'), 'Сервис до обновления кабинета');
+});
+
+test('upgrade-all: реестр и папка «Сервисы» без дублей; сломанный service.json: ошибка только у него', () => {
+  const { c, svcHome } = freshCabinet('upg-5');
+  const a = oldProject(svcHome, 'otpuska', { ...OLD_RUN, name: 'Отпуска' }, { 'CLAUDE.md': '# Старые\n', 'main.py': MAIN_PY() });
+  const b = oldProject(svcHome, 'svetofor', { ...OLD_RUN, name: 'Светофор' }, { 'CLAUDE.md': '# Старые\n', 'main.py': MAIN_PY() });
+  const broken = oldProject(svcHome, 'sloman', '{ "name": "Сломан", ', {});
+  // Сервис в реестре кабинета лежит в другой папке; второй из «Сервисы» тоже в реестре (не дублируется).
+  const elsewhere = oldProject(join(base, 'upg-5', 'Мои проекты'), 'svodka', { ...OLD_RUN, name: 'Сводка' }, { 'main.py': MAIN_PY() });
+  writeFileSync(join(c, 'me', 'servisy.json'), JSON.stringify([
+    { slug: 'svetofor', name: 'Светофор', path: b, kind: 'run', added_at: '2026-11-10T10:00:00Z' },
+    { slug: 'svodka', name: 'Сводка', path: elsewhere, kind: 'run', added_at: '2026-11-10T10:00:00Z' },
+  ]));
+  const found = findProjects(c).map((p) => p.dir);
+  assert.deepEqual(found, [b, elsewhere, a, broken]);
+  const r = upgradeAll(c);
+  const lines = r.message.split('\n');
+  assert.equal(lines[0], 'Обновлены правила в 3 сервисах: Светофор, Сводка, Отпуска.');
+  assert.equal(lines[1], 'Сервис «sloman» не обновлён: service.json повреждён или не в формате JSON.');
+  assert.equal(lines.length, 2);
+  for (const d of [a, b, elsewhere]) assert.equal(JSON.parse(readFileSync(join(d, 'service.json'), 'utf8')).template_version, TEMPLATE_VERSION);
+  assert.equal(readFileSync(join(broken, 'service.json'), 'utf8'), '{ "name": "Сломан", ');
+  // CLI: то же одной командой; повтор: обновлять нечего, ошибка сломанного остаётся (код 1).
+  const cliAll = spawnSync(process.execPath, [join(c, 'tools', 'services.mjs'), 'upgrade-all'], { encoding: 'utf8' });
+  assert.equal(cliAll.status, 1, cliAll.stdout);
+  assert.equal(cliAll.stdout.trim(), 'Сервис «sloman» не обновлён: service.json повреждён или не в формате JSON.');
+  rmSync(broken, { recursive: true, force: true });
+  const ok = spawnSync(process.execPath, [join(c, 'tools', 'services.mjs'), 'upgrade-all'], { encoding: 'utf8' });
+  assert.equal(ok.status, 0, ok.stdout);
+  assert.match(ok.stdout, /уже по новой версии/);
+});
+
+test('upgrade web: lib/vendor и public/ui из кабинета, каркас только недостающим, vercel.json курса, файлы человека целы', () => {
+  const { c, svcHome } = freshCabinet('upg-6');
+  const T = join(ROOT, 'templates', 'web-service');
+  // Сервис после перевода: kind web, свои действия, страница и таблицы; lib и public/ui ещё нет.
+  const dir = oldProject(svcHome, 'zayavki', { name: 'Заявки', about: '', kind: 'web', api: 'api/index.py', public: 'public/', db: 'db/' }, {
+    'CLAUDE.md': `# Правила сервиса на компьютере\n\n${LESSONS}`,
+    'api/index.py': `${readFileSync(join(T, 'api', 'index.py'), 'utf8')}\n# моя правка\n`,
+    'public/index.html': `${readFileSync(join(T, 'public', 'index.html'), 'utf8')}\n<!-- моя страница -->\n`,
+    'db/002_moi.sql': 'create table if not exists app.moi (id serial primary key, t text);\n',
+    'input/zayavki.csv': 'ФИО;Дни\nА;5\n',
+    '.env': 'SERVICE_ACCESS_CODE=kot-dom-les\n',
+    'main.py': MAIN_PY(),
+    'vercel.json': '{"old": true}\n',
+    'lib/vendor/lishniy.py': 'x = 1\n',
+    'public/ui/moy.css': '.moy {}\n',
+  });
+  const own = (r) => ['api', 'api/index.py', 'public', 'public/index.html', 'public/ui', 'public/ui/moy.css', 'db', 'input', '.env', 'main.py'].some((p) => r === p || r.startsWith(`${p}/`)) && !(r.startsWith('public/ui/') && r !== 'public/ui/moy.css');
+  const before = hashes(dir, own);
+  const r = upgradeProject(c, dir);
+  assert.equal(r.error, undefined, r.error);
+  for (const n of LIB_FILES_WEB) assert.ok(readFileSync(join(dir, 'lib', n)).equals(readFileSync(join(c, 'tools', n))), n);
+  // lib/vendor: копия tools/vendor (без кэша Python), лишнее убрано.
+  const skipCache = (r2) => !r2.split('/').includes('__pycache__') && !r2.endsWith('.pyc');
+  assert.deepEqual(hashes(join(dir, 'lib', 'vendor'), skipCache), hashes(join(c, 'tools', 'vendor'), skipCache));
+  assert.equal(existsSync(join(dir, 'lib', 'vendor', 'lishniy.py')), false);
+  // public/ui: набор без витрины, brand.css из бренда (в этом кабинете бренда нет: пустой), свой файл на месте.
+  for (const n of ['basecoat.css', 'kabinet.css', 'kabinet.js', 'tailwind.js', 'chart.js']) assert.ok(existsSync(join(dir, 'public', 'ui', n)), n);
+  assert.equal(existsSync(join(dir, 'public', 'ui', 'demo.html')), false);
+  assert.ok(existsSync(join(dir, 'public', 'ui', 'brand.css')));
+  // Каркас: недостающее положено, своё не тронуто; в db уже есть таблицы: 001_init.sql не нужен.
+  for (const n of ['requirements.txt', '.python-version']) assert.ok(readFileSync(join(dir, n)).equals(readFileSync(join(T, n))), n);
+  assert.equal(existsSync(join(dir, 'db', '001_init.sql')), false);
+  assert.ok(readFileSync(join(dir, 'vercel.json')).equals(readFileSync(join(T, 'vercel.json'))));
+  assert.ok(listFiles(join(dir, '.claude', 'backup')).some((n) => /^vercel-\d{8}-\d{4}\.json$/.test(n)));
+  // Правила и настройки вида web, «Уроки» человека байт в байт.
+  const tplClaude = readFileSync(join(T, 'CLAUDE.md'), 'utf8');
+  assert.ok(readFileSync(join(dir, 'CLAUDE.md')).equals(Buffer.from(tplClaude.slice(0, tplClaude.indexOf('## Уроки')) + LESSONS)));
+  assert.ok(readFileSync(join(dir, '.claude', 'settings.json')).equals(readFileSync(join(T, '.claude', 'settings.json'))));
+  assert.deepEqual(hashes(dir, own), before);
+  // Проект проходит проверку кабинета; повтор ничего не меняет.
+  const chk = checkProject(c, dir);
+  assert.deepEqual([chk.problems, chk.program], [[], []]);
+  assert.deepEqual(upgradeProject(c, dir).changed, []);
+  // CLI: upgrade <папка>.
+  const cliOne = spawnSync(process.execPath, [join(c, 'tools', 'services.mjs'), 'upgrade', dir], { encoding: 'utf8' });
+  assert.equal(cliOne.status, 0, cliOne.stdout);
+  assert.match(cliOne.stdout, /уже по новой версии/);
+});
+
+// ---------- сервис для интернета (kind web) ----------
+
+test('new --kind web: шаблон web-service, lib, vendor, public/ui; check и add проходят; run отказывает', () => {
+  const { c, svcHome } = freshCabinet('web-1');
+  const r = spawnSync(process.execPath, [join(c, 'tools', 'services.mjs'), 'new', 'Заявки на отпуск', '--kind', 'web'], { encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stdout + r.stderr);
+  assert.match(r.stdout, /^Сервис для интернета «Заявки на отпуск» создан/);
+  assert.doesNotMatch(r.stdout, /main\.py/);
+  const dir = join(svcHome, 'zayavki-na-otpusk');
+  const sj = JSON.parse(readFileSync(join(dir, 'service.json'), 'utf8'));
+  assert.equal(sj.name, 'Заявки на отпуск');
+  assert.equal(sj.kind, 'web');
+  assert.equal(sj.api, 'api/index.py');
+  assert.equal(sj.template_version, TEMPLATE_VERSION);
+  for (const f of ['api/index.py', 'public/index.html', 'vercel.json', 'db/001_init.sql', 'lib/web.py', 'lib/db.py', 'lib/web_dev.py', 'lib/vendor/pg8000/__init__.py', 'public/ui/kabinet.js', 'public/ui/brand.css', '.claude/settings.json', '.gitignore']) {
+    assert.ok(existsSync(join(dir, f)), f);
+  }
+  assert.equal(existsSync(join(dir, 'main.py')), false);
+  if (hasGit) assert.equal(gitOut(dir, 'branch', '--show-current'), 'main');
+  const chk = spawnSync(process.execPath, [join(c, 'tools', 'services.mjs'), 'check', dir], { encoding: 'utf8' });
+  assert.equal(chk.status, 0, chk.stdout);
+  assert.match(chk.stdout, /сервис для интернета/);
+  const add = spawnSync(process.execPath, [join(c, 'tools', 'services.mjs'), 'add', dir], { encoding: 'utf8' });
+  assert.equal(add.status, 0, add.stdout);
+  assert.doesNotMatch(add.stdout, /services\.mjs run/);
+  assert.equal(readRegistry(c).list[0].kind, 'web');
+  // Запуска нет: ошибка с кодом и отказ CLI с кодом 2.
+  assert.throws(() => startServiceRun(c, 'zayavki-na-otpusk'), (e) => e.code === 'EWEB' && /нет кнопки «Запустить»: он работает по ссылке/.test(e.message));
+  const run = spawnSync(process.execPath, [join(c, 'tools', 'services.mjs'), 'run', 'zayavki-na-otpusk'], { encoding: 'utf8' });
+  assert.equal(run.status, 2, run.stdout);
+  assert.match(run.stdout, /У сервиса для интернета нет кнопки «Запустить»/);
+  // Неизвестный вид: код 2.
+  assert.equal(spawnSync(process.execPath, [join(c, 'tools', 'services.mjs'), 'new', 'Х', '--kind', 'sayt'], { encoding: 'utf8' }).status, 2);
+});
+
+test('describeService web: для сайта своя страница, итог «Не опубликован» и «Опубликован: адрес», без «Запустить»', () => {
+  const { c, svcHome } = freshCabinet('web-2');
+  const made = createProject(c, 'Заявки', { kind: 'web', git: false });
+  assert.equal(made.dir, join(realpathSync(svcHome), 'zayavki'));
+  const { entry } = addService(c, made.dir);
+  let d = describeService(c, entry);
+  assert.equal(d.kind, 'page');
+  assert.equal(d.web, true);
+  assert.equal(d.run, false);
+  assert.equal(d.page, 's/zayavki/');
+  assert.equal(d.url, null);
+  assert.equal(d.error, null);
+  assert.equal(d.result.status, 'yellow');
+  assert.equal(d.result.summary, 'Не опубликован: скажите «опубликуй сервис» в папке сервиса');
+  assert.deepEqual(validateServiceResult(d.result), { ok: true, errors: [] });
+  assert.equal(d.result.updated_at, new Date(statSync(join(made.dir, 'service.json')).mtimeMs).toISOString());
+  const sj = JSON.parse(readFileSync(join(made.dir, 'service.json'), 'utf8'));
+  writeFileSync(join(made.dir, 'service.json'), JSON.stringify({ ...sj, publish: { url: 'https://zayavki-aigul.vercel.app', published_at: '2026-11-12T06:30:00+05:00' } }, null, 2));
+  d = describeService(c, entry);
+  assert.equal(d.result.status, 'green');
+  assert.equal(d.result.summary, 'Опубликован: https://zayavki-aigul.vercel.app');
+  assert.equal(d.result.updated_at, '2026-11-12T06:30:00+05:00');
+  assert.equal(d.url, 'https://zayavki-aigul.vercel.app');
+  assert.deepEqual(validateServiceResult(d.result), { ok: true, errors: [] });
+  // Адрес не http(s): не ссылка.
+  writeFileSync(join(made.dir, 'service.json'), JSON.stringify({ ...sj, publish: { url: 'javascript:alert(1)' } }, null, 2));
+  assert.equal(describeService(c, entry).url, null);
+  const list = spawnSync(process.execPath, [join(c, 'tools', 'services.mjs'), 'list'], { encoding: 'utf8' });
+  assert.equal(list.status, 0, list.stdout);
+  assert.match(list.stdout, /сервис для интернета, кнопка «Открыть»/);
+  assert.match(list.stdout, /Не опубликован/);
 });

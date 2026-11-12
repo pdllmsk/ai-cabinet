@@ -1,0 +1,9 @@
+{
+  "name": "Новый сервис",
+  "about": "Что делает сервис, одной фразой: Claude допишет, когда сервис будет готов",
+  "kind": "web",
+  "api": "api/index.py",
+  "public": "public/",
+  "db": "db/",
+  "template_version": "2026-11-12"
+}

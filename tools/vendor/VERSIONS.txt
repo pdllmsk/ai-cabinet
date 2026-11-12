@@ -1,0 +1,10 @@
+Драйвер базы Postgres на чистом Python для сервисов вида web (lib/vendor проекта сервиса).
+Кабинет кладёт эту папку в lib/vendor сам; студент и Claude её не правят.
+
+pg8000          1.31.6       BSD-3-Clause   licenses/pg8000-LICENSE
+scramp          1.5.0        MIT-0          licenses/scramp-LICENSE
+asn1crypto      1.5.1        MIT            licenses/asn1crypto-LICENSE
+python-dateutil 2.9.0.post0  Apache-2.0/BSD licenses/dateutil-LICENSE
+six             1.17.0       MIT            licenses/six-LICENSE
+
+Источник: колёса с pypi.org (pip download --only-binary=:all:), распакованы без изменений.

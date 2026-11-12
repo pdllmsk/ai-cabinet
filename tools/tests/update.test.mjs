@@ -345,3 +345,21 @@ test('update: после обновления скиллы «новый серв
     rmSync(w.base, { recursive: true, force: true });
   }
 });
+
+test('update: вчерашний сервис в «Сервисы» получает новые правила, строка об этом в итоге; «Уроки» на месте', async () => {
+  const w = makeWorld();
+  try {
+    const svc = join(w.home, 'Сервисы', 'svetofor');
+    mkdirSync(svc, { recursive: true });
+    writeFileSync(join(svc, 'service.json'), JSON.stringify({ name: 'Светофор', kind: 'run', run: 'main.py', page: null }, null, 2));
+    writeFileSync(join(svc, 'main.py'), 'print(1)\n');
+    writeFileSync(join(svc, 'CLAUDE.md'), '# Старые правила\n## Уроки\n- 10.11: урок\n');
+    w.publish({ 'START.md': '# Ваш кабинет\nверсия 2\n' });
+    const r = await updateCabinet({ root: w.cabinet });
+    assert.equal(r.status, 'updated', r.message);
+    assert.match(r.message, /^Обновлены правила в 1 сервисе: Светофор\.$/m);
+    assert.ok(read(svc, 'CLAUDE.md').endsWith('## Уроки\n- 10.11: урок\n'));
+  } finally {
+    rmSync(w.base, { recursive: true, force: true });
+  }
+});

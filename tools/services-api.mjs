@@ -4,6 +4,11 @@
 //   POST api/services/run {slug}    запуск программы сервиса, как «Запустить» у процессов: ответ 202, дальше
 //                                   страница опрашивает api/services (или api/services/status/<slug>)
 //   GET  api/services/status/<slug> { running, lastRun }
+//   GET  api/services/<slug>/code   код доступа сервиса для интернета из его .env: { code }. Только с заголовком
+//                                   X-Cabinet: 1 (его шлёт карточка сайта), без него 403
+//   POST api/services/<slug>/dev    сервис для интернета на этом компьютере (tools/web.mjs startDev): { url, already };
+//                                   повторно тот же адрес, второй процесс не запускается
+//   GET  s/<slug>/page/             у сервиса для интернета: карточка сайта tools/web-card.html (адрес, код, «на компьютере»)
 //   GET  s/<slug>/                  своя страница сервиса kind page: переход на s/<slug>/page/
 //   GET  s/<slug>/page/<файл>       файлы папки page проекта (.html .js .css .json .png .svg), только у kind page
 //   GET  s/<slug>/output/<файл>     файлы папки output проекта (.json .xlsx .docx .png .csv), на скачивание
@@ -25,6 +30,11 @@ import { extname, join, resolve } from 'node:path';
 import { SLUG_RE, isInside } from './processes.mjs';
 import { OUTPUT_DIR, OUTPUT_EXT, PAGE_DIR, PAGE_EXT, findEntry, listServices, readServiceInfo, serviceStatus, startServiceRun } from './services.mjs';
 import { createServiceCalls } from './service-calls.mjs';
+import { appendJournal } from './journal.mjs';
+import { readEnv, startDev } from './web.mjs';
+
+// Карточка сайта сервиса для интернета: файл курса, его отдаёт кабинет по адресу s/<slug>/page/.
+export const WEB_CARD = ['tools', 'web-card.html'];
 
 const BODY_LIMIT = 4 * 1024;
 const JSON_TYPE = 'application/json; charset=utf-8';
@@ -54,6 +64,7 @@ const RUN_STATUS = {
   EOUTSIDE: 403,
   ERUNNING: 409,
   ELIMIT: 409,
+  EWEB: 400,
 };
 
 const ONLY_PAGE = 'Сервис запускается только кнопкой «Запустить» на странице кабинета.';
@@ -98,9 +109,54 @@ function readBody(req) {
   });
 }
 
-// API под api/services. sub: '' (список), 'run', 'status/<slug>'. Ответ отправлен всегда.
-export function createServicesApi(root, { python, timeoutMs } = {}) {
+// Сервис для интернета из реестра: папка проекта или null.
+async function webDir(root, slug) {
+  const entry = SLUG_RE.test(slug) ? findEntry(root, slug) : null;
+  if (!entry) return null;
+  const dir = await realpath(entry.path).catch(() => null);
+  if (!dir) return null;
+  return readServiceInfo(dir).info?.kind === 'web' ? dir : null;
+}
+
+const NO_WEB = 'Такого сервиса для интернета нет в кабинете.';
+
+// API под api/services. sub: '' (список), 'run', 'status/<slug>', '<slug>/code', '<slug>/dev'. Ответ отправлен всегда.
+// devEnv: дополнительные переменные для страницы сервиса на компьютере (тесты: WEB_DB_FAKE).
+export function createServicesApi(root, { python, timeoutMs, devEnv } = {}) {
   root = resolve(root);
+  async function showCode(req, res, slug) {
+    req.resume();
+    if (!isRead(req)) return notAllowed(res, 'GET, HEAD');
+    if (req.headers['x-cabinet'] !== '1') return sendJson(res, 403, { error: 'Код доступа показывает только карточка сервиса в кабинете.' });
+    const dir = await webDir(root, slug);
+    if (!dir) return sendJson(res, 404, { error: NO_WEB });
+    const code = readEnv(dir).get('SERVICE_ACCESS_CODE') ?? '';
+    appendJournal(root, { service: slug, event: 'web.code.show', ok: Boolean(code) });
+    if (!code) return sendJson(res, 404, { error: 'Кода доступа ещё нет: скажите «опубликуй сервис» в папке сервиса.' });
+    return sendJson(res, 200, { code });
+  }
+  async function showDev(req, res, slug) {
+    if (req.method !== 'POST') {
+      req.resume();
+      return notAllowed(res, 'POST');
+    }
+    if (!fromPage(req)) {
+      req.resume();
+      return sendJson(res, 403, { error: 'Сервис на компьютере открывается только кнопкой на его карточке в кабинете.' });
+    }
+    await readBody(req);
+    const dir = await webDir(root, slug);
+    if (!dir) return sendJson(res, 404, { error: NO_WEB });
+    try {
+      const r = await startDev(root, dir, { python, ...(devEnv ? { env: devEnv } : {}) });
+      appendJournal(root, { service: slug, event: 'web.dev.start', ok: true, already: Boolean(r.already) });
+      return sendJson(res, 200, { url: r.url, already: Boolean(r.already) });
+    } catch (e) {
+      appendJournal(root, { service: slug, event: 'web.dev.start', ok: false, already: false });
+      const status = e.code === 'ELIB' ? 400 : 500;
+      return sendJson(res, status, { code: e.code ?? null, error: e.code ? e.message : 'Сервис на компьютере не запустился. Попробуйте ещё раз.' });
+    }
+  }
   async function handle(req, res, sub) {
     const route = sub.replace(/\/+$/, '');
     if (route === '') {
@@ -136,6 +192,8 @@ export function createServicesApi(root, { python, timeoutMs } = {}) {
       const st = serviceStatus(root, slug);
       return st ? sendJson(res, 200, st) : sendJson(res, 404, { error: 'Такого сервиса нет в кабинете.' });
     }
+    if (head && slug === 'code' && !more.length) return showCode(req, res, head);
+    if (head && slug === 'dev' && !more.length) return showDev(req, res, head);
     req.resume();
     return sendJson(res, 404, { error: 'Такого адреса у страницы нет.' });
   }
@@ -200,6 +258,7 @@ export async function serveServiceFile(root, req, res, raw, { token }) {
   const dir = await realpath(entry.path).catch(() => null);
   if (!dir) return notFound(res);
   const { info } = readServiceInfo(dir);
+  if (info?.kind === 'web' && rest[0] !== OUTPUT_DIR) return serveWebCard(root, req, res, rest, slug, token);
   const isPage = info?.kind === 'page' && info.page === PAGE_DIR;
   // s/<slug> и s/<slug>/: своя страница (kind page).
   if (!rest.length || (rest.length === 1 && rest[0] === '')) {
@@ -245,6 +304,39 @@ export async function serveServiceFile(root, req, res, raw, { token }) {
     const stream = createReadStream(file);
     stream.on('open', () => {
       res.writeHead(200, headers);
+      if (req.method === 'HEAD') {
+        stream.destroy();
+        res.end();
+        return done();
+      }
+      stream.pipe(res);
+    });
+    stream.on('error', () => {
+      if (!res.headersSent) notFound(res);
+      else res.destroy();
+      done();
+    });
+    stream.on('close', done);
+  });
+}
+
+// s/<slug>/... сервиса для интернета: s/<slug>/ и s/<slug>/page ведут на s/<slug>/page/, там карточка сайта
+// (tools/web-card.html). Других файлов в page нет (output отдаёт serveServiceFile, как у других сервисов).
+async function serveWebCard(root, req, res, rest, slug, token) {
+  const toPage = () => {
+    res.writeHead(302, { ...SAFE_HEADERS, Location: `/${token}/s/${slug}/${PAGE_DIR}/` });
+    return res.end();
+  };
+  if (!rest.length || (rest.length === 1 && rest[0] === '')) return toPage();
+  const [area, ...tail] = rest;
+  if (area !== PAGE_DIR) return notFound(res);
+  if (!tail.length) return toPage();
+  if (!(tail.length === 1 && (tail[0] === '' || tail[0] === 'index.html'))) return notFound(res);
+  const file = join(root, ...WEB_CARD);
+  await new Promise((done) => {
+    const stream = createReadStream(file);
+    stream.on('open', () => {
+      res.writeHead(200, { ...SAFE_HEADERS, 'Content-Type': TYPES['.html'], 'Content-Security-Policy': "frame-ancestors 'self'" });
       if (req.method === 'HEAD') {
         stream.destroy();
         res.end();
@@ -328,7 +420,7 @@ export function attachServices(server, root, { token, python, timeoutMs, api: ap
   if (typeof token !== 'string' || token.length < 8) throw new Error('Для страницы нужен токен (личная часть адреса).');
   server[ATTACHED] = true;
   const cabinet = resolve(root);
-  const api = createServicesApi(cabinet, { python, timeoutMs });
+  const api = createServicesApi(cabinet, { python, timeoutMs, devEnv: apiOptions.devEnv });
   const calls = createServiceCalls(cabinet, { python, ...apiOptions });
   const previous = server.listeners('request');
   server.removeAllListeners('request');

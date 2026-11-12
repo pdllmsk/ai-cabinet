@@ -116,8 +116,8 @@ test('init: кабинет, поставленный до сервиса «Ан�
 // Пользовательские скиллы: templates/user-skills/kabinet-* в папку скиллов Claude (~/.claude/skills).
 const SKILLS = readdirSync(join(ROOT, 'templates', 'user-skills')).filter((n) => USER_SKILL_RE.test(n)).sort();
 
-test('скиллы: в шаблонах курса kabinet-novyi-servis и kabinet-dobav-v-kabinet', () => {
-  assert.deepEqual(SKILLS, ['kabinet-dobav-v-kabinet', 'kabinet-novyi-servis']);
+test('скиллы: в шаблонах курса новый сервис, добавить в кабинет, подключить публикацию, опубликовать', () => {
+  assert.deepEqual(SKILLS, ['kabinet-dobav-v-kabinet', 'kabinet-novyi-servis', 'kabinet-opublikuy', 'kabinet-podkluchi-publikaciyu']);
 });
 
 test('скиллы: ставятся с путём к кабинету, повтор ничего не меняет, свои обновляются, чужие целы', () => {
@@ -136,7 +136,7 @@ test('скиллы: ставятся с путём к кабинету, повт
     assert.equal(r.status, 'installed');
     assert.equal(r.dir, target);
     assert.deepEqual(r.installed, SKILLS);
-    assert.match(r.message, /^Скиллы «новый сервис» и «добавь в кабинет» поставлены/);
+    assert.match(r.message, /^Скиллы «новый сервис», «добавь в кабинет», «подключи публикацию» и «опубликуй сервис» поставлены/);
     for (const name of SKILLS) {
       const text = readFileSync(join(target, name, 'SKILL.md'), 'utf8');
       const tpl = readFileSync(join(ROOT, 'templates', 'user-skills', name, 'SKILL.md'), 'utf8');
@@ -198,7 +198,7 @@ test('скиллы: CLI из пути с кириллицей ставит их 
     assert.equal(r.status, 0, r.stderr);
     const lines = r.stdout.trim().split('\n');
     assert.equal(lines.length, 2);
-    assert.match(lines[1], /^Скиллы «новый сервис» и «добавь в кабинет» поставлены/);
+    assert.match(lines[1], /^Скиллы «новый сервис», «добавь в кабинет», «подключи публикацию» и «опубликуй сервис» поставлены/);
     for (const name of SKILLS) assert.ok(existsSync(join(home, '.claude', 'skills', name, 'SKILL.md')), name);
     r = run();
     assert.match(r.stdout, /на месте/);
@@ -209,9 +209,52 @@ test('скиллы: CLI из пути с кириллицей ставит их 
     assert.deepEqual(rep.created, []);
     assert.equal(rep.skills.status, 'installed');
     assert.deepEqual(rep.skills.installed, [SKILLS[1]]);
+    // Сервисов нет, кабинет без git: строк о них нет, поля в отчёте есть.
+    assert.deepEqual(rep.services, { message: '', results: [] });
+    assert.equal(rep.pushguard.status, 'nogit');
+    assert.equal(typeof rep.pushguard.message, 'string');
     // --json как раньше: только список созданных файлов (его читают прежние версии update.mjs).
     r = run('--json');
     assert.deepEqual(JSON.parse(r.stdout), []);
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+test('init --report: вчерашние сервисы обновляются (правила, «Уроки» на месте, git), отчёт services и pushguard', (t) => {
+  if (spawnSync('git', ['--version'], { stdio: 'ignore' }).status !== 0) return t.skip('git нет');
+  const { base, dir } = makeCabinet();
+  const home = join(base, 'дом');
+  try {
+    copyDir(join(ROOT, 'tools'), join(dir, 'tools'));
+    // Вчерашний сервис из старого шаблона: свои уроки, без git, без template_version.
+    const svc = join(base, 'Айгуль Н', 'Сервисы', 'svodka');
+    mkdirSync(join(svc, 'input'), { recursive: true });
+    writeFileSync(join(svc, 'service.json'), JSON.stringify({ name: 'Сводка', about: '', kind: 'run', run: 'main.py', result: 'output/result.json', input: 'input/', page: null }, null, 2));
+    writeFileSync(join(svc, 'main.py'), 'print(1)\n');
+    writeFileSync(join(svc, 'CLAUDE.md'), '# Старые правила\n\n## Уроки\n\n- 10.11: возвраты вычитаю\n');
+    writeFileSync(join(svc, 'input', 'prodazhi.csv'), 'a;b\n1;2\n');
+    const cfg = join(base, 'gitconfig');
+    writeFileSync(cfg, '');
+    const env = { ...envWithHome(home), GIT_CONFIG_GLOBAL: cfg, GIT_CONFIG_NOSYSTEM: '1' };
+    const r = spawnSync(process.execPath, [join(dir, 'tools', 'init.mjs'), '--report'], { encoding: 'utf8', cwd: base, env });
+    assert.equal(r.status, 0, r.stderr);
+    const rep = JSON.parse(r.stdout);
+    assert.equal(rep.services.message, 'Обновлены правила в 1 сервисе: Сводка.');
+    assert.equal(rep.services.results.length, 1);
+    assert.equal(rep.pushguard.status, 'nogit');
+    const rules = readFileSync(join(svc, 'CLAUDE.md'), 'utf8');
+    assert.ok(rules.endsWith('## Уроки\n\n- 10.11: возвраты вычитаю\n'), rules.slice(-200));
+    assert.ok(rules.startsWith(readFileSync(join(ROOT, 'templates', 'service-project', 'CLAUDE.md'), 'utf8').split('## Уроки')[0]));
+    assert.ok(existsSync(join(svc, '.git')));
+    assert.equal(JSON.parse(readFileSync(join(svc, 'service.json'), 'utf8')).template_version, '2026-11-12');
+    // Повтор: обновлять нечего, строки нет; код выхода init не зависит от сервисов.
+    const again = JSON.parse(spawnSync(process.execPath, [join(dir, 'tools', 'init.mjs'), '--report'], { encoding: 'utf8', cwd: base, env }).stdout);
+    assert.equal(again.services.message, '');
+    writeFileSync(join(svc, 'service.json'), '{ сломан');
+    const broken = spawnSync(process.execPath, [join(dir, 'tools', 'init.mjs'), '--report'], { encoding: 'utf8', cwd: base, env });
+    assert.equal(broken.status, 0, broken.stderr);
+    assert.match(JSON.parse(broken.stdout).services.message, /^Сервис «svodka» не обновлён: service\.json повреждён/);
   } finally {
     rmSync(base, { recursive: true, force: true });
   }

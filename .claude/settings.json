@@ -17,6 +17,8 @@
       "Bash(node tools/processes.mjs*)",
       "Bash(node tools/services.mjs*)",
       "Bash(node tools/selftest.mjs*)",
+      "Bash(node tools/web.mjs*)",
+      "Bash(node tools/init.mjs*)",
       "Bash(python tools/read_table.py*)",
       "Bash(py tools/read_table.py*)",
       "Bash(python3 tools/read_table.py*)",

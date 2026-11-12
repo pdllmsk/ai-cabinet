@@ -1,0 +1,21 @@
+# Ключи сервиса: только на этом компьютере и в настройках Vercel, не в git и не для Claude
+.env
+.env.*
+**/.env
+**/.env.*
+
+# Данные человека и результаты: не в git
+input/*
+!input/.gitkeep
+output/*
+!output/.gitkeep
+
+# Служебное
+.vercel/
+.cabinet-upload/
+__pycache__/
+*.pyc
+*.tmp
+.DS_Store
+.claude/settings.local.json
+.claude/backup/

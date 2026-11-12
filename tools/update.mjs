@@ -52,29 +52,31 @@ function blockingPaths(r) {
   return r.stderr.split('\n').filter((l) => l.startsWith('\t')).map((l) => l.trim()).filter(Boolean);
 }
 
-// Недостающие файлы участника из шаблонов и скиллы kabinet-* в папке скиллов Claude. init.mjs запускается
-// отдельным процессом: он читает MANIFEST и шаблоны уже новой версии, а в памяти этого процесса осталась старая.
-// Не вышло: создаём файлы старым MANIFEST (лучше, чем ничего), скиллы поставит следующая проверка сетапа.
-// Возвращает { created: [...], skills: строка человеку или '' }.
+// Недостающие файлы участника из шаблонов, скиллы kabinet-* в папке скиллов Claude и обновление проектов
+// сервисов. init.mjs запускается отдельным процессом: он читает MANIFEST и шаблоны уже новой версии, а в памяти
+// этого процесса осталась старая. Не вышло: создаём файлы старым MANIFEST (лучше, чем ничего), скиллы поставит
+// следующая проверка сетапа.
+// Возвращает { created: [...], skills: строка человеку или '', services: строки человеку или '' }.
 async function createFromTemplates(root) {
-  const r = await defaultExec(process.execPath, [join(root, 'tools', 'init.mjs'), '--report'], { cwd: root, shell: false, timeout: 30000 });
+  const r = await defaultExec(process.execPath, [join(root, 'tools', 'init.mjs'), '--report'], { cwd: root, shell: false, timeout: 120000 });
   if (r.code === 0) {
     try {
       const out = JSON.parse(r.stdout);
       if (Array.isArray(out?.created)) {
         const s = out.skills;
         const line = ['installed', 'updated', 'error'].includes(s?.status) && typeof s.message === 'string' ? s.message : '';
-        return { created: out.created, skills: line };
+        const services = typeof out.services?.message === 'string' ? out.services.message : '';
+        return { created: out.created, skills: line, services };
       }
     } catch {
       // Вывод не JSON: ниже создаём сами.
     }
   }
   try {
-    return { created: ensureParticipantFiles(root), skills: '' };
+    return { created: ensureParticipantFiles(root), skills: '', services: '' };
   } catch {
     // Не страшно: check.mjs и serve.mjs создадут недостающее при следующем запуске.
-    return { created: [], skills: '' };
+    return { created: [], skills: '', services: '' };
   }
 }
 
@@ -120,8 +122,8 @@ export async function updateCabinet({
     ? 'Сеть компании подменяет сертификаты, поэтому обновление прошло через сертификаты Windows. Чтобы так было всегда, тренер или ИТ могут выполнить: git config --global http.sslBackend schannel'
     : '';
   const finish = async (status, lines) => {
-    const { created, skills } = await createFromTemplates(root);
-    return result(status, [...lines, created.length ? `Созданы из шаблонов: ${created.join(', ')}.` : '', skills, schannelTip]);
+    const { created, skills, services } = await createFromTemplates(root);
+    return result(status, [...lines, created.length ? `Созданы из шаблонов: ${created.join(', ')}.` : '', skills, services, schannelTip]);
   };
 
   // 2. Нового нет: ничего не трогаем.

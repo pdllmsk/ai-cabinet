@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>Сервис для интернета</title>
+  <!-- Карточка сервиса для интернета в кабинете (файл курса tools/web-card.html, адрес s/<сервис>/page/).
+       Данные: api/services (адрес сайта), api/services/<сервис>/code (код доступа, заголовок X-Cabinet: 1),
+       api/services/<сервис>/dev (сервис на этом компьютере). Ссылки только относительные: в адресе личная часть. -->
+  <link rel="stylesheet" href="../../../ui/basecoat.css">
+  <link rel="stylesheet" href="../../../ui/brand.css">
+  <link rel="stylesheet" href="../../../ui/kabinet.css">
+  <script src="../../../ui/kabinet.js"></script>
+  <script src="../../../ui/tailwind.js"></script>
+  <script src="../../../ui/basecoat.js" defer></script>
+</head>
+<body>
+  <main class="mx-auto max-w-3xl px-4 py-6 flex flex-col gap-6">
+    <header class="flex flex-col gap-1">
+      <h1 class="text-2xl font-semibold" id="title">Сервис для интернета</h1>
+      <p class="text-muted-foreground text-sm" id="about"></p>
+    </header>
+
+    <div class="alert" data-variant="destructive" id="fail" hidden>
+      <h2>Карточка не загрузилась</h2>
+      <section id="fail-text"></section>
+    </div>
+
+    <div class="card" id="site">
+      <header>
+        <h2>Сайт для коллег</h2>
+        <p>Коллеги открывают его по ссылке и входят по коду доступа.</p>
+      </header>
+      <section class="flex flex-col gap-3">
+        <div id="published" class="flex flex-col gap-2" hidden>
+          <p class="text-sm">Адрес: <a id="url-text" class="underline underline-offset-4" href="#" target="_blank" rel="noopener noreferrer"></a></p>
+          <div class="flex flex-wrap gap-2">
+            <a class="btn" id="open-site" href="#" target="_blank" rel="noopener noreferrer">Открыть сайт</a>
+          </div>
+        </div>
+        <p class="text-sm text-muted-foreground" id="not-published" hidden>Не опубликован: скажите «опубликуй сервис» в папке сервиса.</p>
+      </section>
+    </div>
+
+    <div class="card">
+      <header>
+        <h2>Код доступа</h2>
+        <p>Его передают коллегам отдельно от ссылки.</p>
+      </header>
+      <section class="flex flex-col gap-3">
+        <div class="flex flex-wrap gap-2">
+          <button type="button" class="btn" data-variant="outline" id="show-code">Показать код</button>
+        </div>
+        <p class="text-lg font-semibold" id="code" hidden></p>
+        <p class="text-sm text-muted-foreground" id="code-note" hidden></p>
+      </section>
+    </div>
+
+    <div class="card">
+      <header>
+        <h2>На этом компьютере</h2>
+        <p>Та же страница сервиса, открывается только у вас.</p>
+      </header>
+      <section class="flex flex-col gap-3">
+        <div class="flex flex-wrap gap-2">
+          <button type="button" class="btn" data-variant="outline" id="show-dev">Показать на компьютере</button>
+        </div>
+        <p class="text-sm" id="dev-note" hidden></p>
+      </section>
+    </div>
+
+    <p class="text-sm text-muted-foreground">Изменить сервис: кнопка «Редактировать» на карточке.</p>
+  </main>
+  <script>
+    (function () {
+      // Имя сервиса из адреса страницы: .../s/<сервис>/page/ (или .../page/index.html).
+      var parts = location.pathname.split('/');
+      var slug = '';
+      try {
+        slug = parts.length >= 4 && parts[parts.length - 2] === 'page' ? decodeURIComponent(parts[parts.length - 3]) : '';
+      } catch (e) {
+        slug = '';
+      }
+      var api = '../../../api/services';
+      var $ = function (id) { return document.getElementById(id); };
+      var show = function (id, text) {
+        var el = $(id);
+        if (text !== undefined) el.textContent = text;
+        el.hidden = false;
+      };
+      var fail = function (text) {
+        show('fail-text', text);
+        $('fail').hidden = false;
+      };
+      var answer = function (r) {
+        return r.json().catch(function () { return {}; }).then(function (body) {
+          if (!r.ok) throw new Error(body && body.error ? body.error : 'Кабинет не ответил. Обновите страницу.');
+          return body;
+        });
+      };
+
+      function draw(item) {
+        $('title').textContent = item.name || item.title || slug;
+        document.title = item.name || item.title || 'Сервис для интернета';
+        if (item.about) $('about').textContent = item.about;
+        var url = typeof item.url === 'string' && /^https?:\/\//i.test(item.url) ? item.url : '';
+        if (url) {
+          $('url-text').href = url;
+          $('url-text').textContent = url;
+          $('open-site').href = url;
+          $('published').hidden = false;
+          $('not-published').hidden = true;
+        } else {
+          $('published').hidden = true;
+          $('not-published').hidden = false;
+        }
+      }
+
+      function load() {
+        fetch(api, { cache: 'no-store' })
+          .then(answer)
+          .then(function (list) {
+            var item = null;
+            for (var i = 0; Array.isArray(list) && i < list.length; i++) if (list[i] && list[i].slug === slug) item = list[i];
+            if (!item) return fail('Такого сервиса нет в кабинете. Обновите страницу кабинета.');
+            draw(item);
+          })
+          .catch(function (e) { fail(e.message); });
+      }
+
+      $('show-code').addEventListener('click', function () {
+        var btn = this;
+        // Код на экране: второе нажатие его прячет.
+        if (!$('code').hidden) {
+          $('code').hidden = true;
+          $('code-note').hidden = true;
+          btn.textContent = 'Показать код';
+          return;
+        }
+        btn.disabled = true;
+        fetch(api + '/' + encodeURIComponent(slug) + '/code', { cache: 'no-store', headers: { 'X-Cabinet': '1' } })
+          .then(answer)
+          .then(function (body) {
+            show('code', body.code);
+            btn.textContent = 'Скрыть код';
+            show('code-note', 'Код знают только те, кому вы его передали. Поменять код: скажите «смени код доступа» в папке сервиса.');
+          })
+          .catch(function (e) { show('code-note', e.message); })
+          .then(function () { btn.disabled = false; });
+      });
+
+      $('show-dev').addEventListener('click', function () {
+        var btn = this;
+        btn.disabled = true;
+        show('dev-note', 'Запускаю страницу сервиса на этом компьютере…');
+        // Вкладка открывается сразу по нажатию (иначе браузер её заблокирует), адрес приходит позже.
+        var tab = window.open('about:blank', '_blank');
+        if (tab) tab.opener = null;
+        fetch(api + '/' + encodeURIComponent(slug) + '/dev', {
+          method: 'POST',
+          cache: 'no-store',
+          headers: { 'X-Cabinet': '1', 'Content-Type': 'application/json' },
+          body: '{}'
+        })
+          .then(answer)
+          .then(function (body) {
+            var url = typeof body.url === 'string' && /^http:\/\/127\.0\.0\.1:\d+\/$/.test(body.url) ? body.url : '';
+            if (!url) throw new Error('Страница сервиса не запустилась. Попробуйте ещё раз.');
+            if (tab) tab.location.href = url;
+            var note = $('dev-note');
+            note.textContent = 'Страница работает: ';
+            var a = document.createElement('a');
+            a.href = url;
+            a.target = '_blank';
+            a.rel = 'noopener noreferrer';
+            a.className = 'underline underline-offset-4';
+            a.textContent = url;
+            note.appendChild(a);
+            note.hidden = false;
+          })
+          .catch(function (e) {
+            if (tab) tab.close();
+            show('dev-note', e.message);
+          })
+          .then(function () { btn.disabled = false; });
+      });
+
+      load();
+    })();
+  </script>
+</body>
+</html>
