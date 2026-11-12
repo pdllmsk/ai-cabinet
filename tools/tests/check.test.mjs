@@ -508,9 +508,9 @@ test('публикация: строка блока пуша и связь с Gi
 
   const good = await checkPublishNet(async () => ({ ok: true }));
   assert.equal(good.status, 'ok');
-  const cut = await checkPublishNet(async (h) => (h.port === 6543 ? { ok: false, error: 'ETIMEDOUT' } : { ok: true }));
+  const cut = await checkPublishNet(async (h) => (h.port === 5432 ? { ok: false, error: 'ETIMEDOUT' } : { ok: true }));
   assert.equal(cut.status, 'warn');
-  assert.match(cut.title, /pooler\.supabase\.com:6543/);
+  assert.match(cut.title, /pooler\.supabase\.com:5432/);
   assert.match(cut.hint, /ИТ/);
   assert.doesNotMatch(cut.title + cut.hint, /[‒-―]/);
 });

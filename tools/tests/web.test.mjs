@@ -185,7 +185,7 @@ test('secret: DATABASE_URL с ref и host, пароль не в SQL, без --ro
   const u = new URL(s1.database_url);
   assert.equal(decodeURIComponent(u.username), `${role}.${REF}`);
   assert.equal(u.hostname, HOST);
-  assert.equal(u.port, '6543');
+  assert.equal(u.port, '5432');
   assert.equal(u.searchParams.get('sslmode'), 'require');
   const password = decodeURIComponent(u.password);
   assert.equal(Buffer.from(password, 'base64url').length, 32);
@@ -202,9 +202,9 @@ test('secret: DATABASE_URL с ref и host, пароль не в SQL, без --ro
   assert.equal(s2.changed, false);
   assert.equal(s2.cookie_secret, cookie);
   assert.equal(readEnv(dir).get('SERVICE_COOKIE_SECRET'), cookie);
-  const s3 = makeSecret(dir, { ref: REF, host: HOST, port: 5432, rotate: true });
+  const s3 = makeSecret(dir, { ref: REF, host: HOST, port: 6543, rotate: true });
   assert.notEqual(decodeURIComponent(new URL(s3.database_url).password), password);
-  assert.equal(new URL(s3.database_url).port, '5432');
+  assert.equal(new URL(s3.database_url).port, '6543');
   assert.equal(readEnv(dir).get('SERVICE_COOKIE_SECRET'), cookie);
   const bad = await run(['secret', dir, '--host', HOST]);
   assert.equal(bad.code, 2);
@@ -410,7 +410,7 @@ test('secret: у сервиса на компьютере только посл�
   writeFileSync(join(dir, 'service.json'), JSON.stringify(svc));
   const ok = await run(['secret', dir, '--ref', REF, '--host', HOST, '--json']);
   assert.equal(ok.code, 0, ok.text);
-  assert.ok(readEnv(dir).get('DATABASE_URL').includes(`@${HOST}:6543/`));
+  assert.ok(readEnv(dir).get('DATABASE_URL').includes(`@${HOST}:5432/`));
 });
 
 // ---------- migrate-plan ----------

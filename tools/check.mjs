@@ -325,14 +325,14 @@ export function pushGuardResult(state) {
   return fail('pushguard', 'Публикация кабинета не закрыта', 'скажите Claude «обнови кабинет»; не помогло, покажите это тренеру');
 }
 
-// Адреса для публикации сервисов (GitHub, Vercel, Supabase). Пул базы Supabase: порт 6543.
+// Адреса для публикации сервисов (GitHub, Vercel, Supabase). Пул базы Supabase: порт 5432 (режим session).
 export const PUBLISH_HOSTS = [
   { host: 'github.com', port: 443 },
   { host: 'api.github.com', port: 443 },
   { host: 'vercel.com', port: 443 },
   { host: 'api.vercel.com', port: 443 },
   { host: 'supabase.com', port: 443 },
-  { host: 'aws-0-eu-central-1.pooler.supabase.com', port: 6543, tcp: true },
+  { host: 'aws-0-eu-central-1.pooler.supabase.com', port: 5432, tcp: true },
 ];
 
 // Доступен ли адрес: HTTPS-ответ любого кода или TCP-соединение. { ok, error }.
@@ -376,7 +376,7 @@ export async function checkPublishNet(probe = probeHost) {
   if (!bad.length) return { ...ok('net-publish', title), hosts: res.map((x) => ({ host: hostName(x.h), ok: true })) };
   const list = bad.map((x) => hostName(x.h)).join(', ');
   return {
-    ...warn('net-publish', `${title}: нет связи с ${list}`, `попросите ИТ открыть адреса github.com, api.github.com, vercel.com, *.vercel.app, api.vercel.com, supabase.com, *.supabase.co и *.pooler.supabase.com (порт 6543)`),
+    ...warn('net-publish', `${title}: нет связи с ${list}`, `попросите ИТ открыть адреса github.com, api.github.com, vercel.com, *.vercel.app, api.vercel.com, supabase.com, *.supabase.co и *.pooler.supabase.com (порт 5432)`),
     hosts: res.map((x) => ({ host: hostName(x.h), ok: Boolean(x.r?.ok), error: x.r?.error ?? null })),
   };
 }

@@ -154,10 +154,17 @@ class DbConnectTest(unittest.TestCase):
         self.assertEqual(seen["user"], "app_svetofor.abcdefghijklmnop")
         self.assertEqual(seen["password"], "p@ss/w")
         self.assertEqual(seen["host"], "aws-0-eu-central-1.pooler.supabase.com")
-        self.assertEqual(seen["port"], 6543)
+        self.assertEqual(seen["port"], 5432)  # старый ключ на 6543: идём в пул session на 5432
         self.assertEqual(seen["database"], "postgres")
         self.assertIsNotNone(seen["ssl_context"])
         self.assertEqual(seen["timeout"], db.CONNECT_TIMEOUT)
+
+    def test_порт(self):
+        from urllib.parse import urlsplit
+        self.assertEqual(db._port(urlsplit("postgresql://u:p@aws-1-eu-central-1.pooler.supabase.com:5432/postgres")), 5432)
+        self.assertEqual(db._port(urlsplit("postgresql://u:p@aws-1-eu-central-1.pooler.supabase.com/postgres")), 5432)
+        # 6543 меняется только у пула Supabase: у своей базы порт как в адресе.
+        self.assertEqual(db._port(urlsplit("postgresql://u:p@localhost:6543/postgres")), 6543)
 
     def test_нет_связи_понятная_ошибка(self):
         os.environ["DATABASE_URL"] = "postgresql://u:p@127.0.0.1:1/postgres"

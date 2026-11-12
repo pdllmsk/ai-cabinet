@@ -1,4 +1,4 @@
-"""База сервиса: Postgres в Supabase через пул соединений. Кабинет кладёт этот файл в lib/ проекта вида web
+"""База сервиса: Postgres в Supabase через пул соединений (режим session, порт 5432). Кабинет кладёт этот файл в lib/ проекта вида web
 и сервиса на компьютере с базой (поле db в service.json, фраза «подключи базу»).
 
 Подключение из переменной DATABASE_URL (её пишет node "<кабинет>/tools/web.mjs" secret в .env проекта, на Vercel
@@ -81,6 +81,16 @@ def _database_url():
     return ""
 
 
+def _port(u):
+    """Порт из адреса. Пул Supabase на 6543 (режим transaction) между запросами меняет соединение с базой:
+    рвёт запросы с параметрами (pg8000 шлёт их несколькими пакетами) и не держит SET, временные таблицы и
+    prepare. Поэтому к пулу всегда идём на 5432 (режим session: тот же адрес и ключ, обычный Postgres).
+    Так работают и ключи, выданные до перехода, на компьютере и на Vercel, без замены."""
+    if (u.hostname or "").endswith(".pooler.supabase.com") and u.port == 6543:
+        return 5432
+    return u.port or 5432
+
+
 def _connect_pg():
     url = _database_url()
     if not url:
@@ -103,7 +113,7 @@ def _connect_pg():
             user=unquote(u.username),
             password=unquote(u.password or ""),
             host=u.hostname,
-            port=u.port or 5432,
+            port=_port(u),
             database=(u.path or "/postgres").lstrip("/") or "postgres",
             ssl_context=ctx,
             timeout=CONNECT_TIMEOUT,

@@ -3,7 +3,7 @@
 //
 //   node tools/web.mjs check "<папка проекта>"         service.json, программа, SQL, страница, db/*.sql
 //   node tools/web.mjs pii "<папка проекта>"           личные данные в столбцах db/*.sql и в файлах input/
-//   node tools/web.mjs secret "<папка>" --ref <ref> --host <пул> [--port 6543] [--rotate]
+//   node tools/web.mjs secret "<папка>" --ref <ref> --host <пул> [--port 5432] [--rotate]
 //                                                      роль базы: SQL с хэшем пароля, DATABASE_URL в .env
 //   node tools/web.mjs code "<папка>" [--rotate]       код доступа из трёх слов в .env (код и его хэш)
 //   node tools/web.mjs dev "<папка>" [--stop]          страница сервиса на этом компьютере (lib/web_dev.py)
@@ -829,11 +829,12 @@ const HOST_RE = /^(?=.{1,253}$)[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?(?:\.[A-Z
 
 // Ключ базы: пароль роли (новый или прежний), DATABASE_URL и SERVICE_COOKIE_SECRET в .env, SQL для базы.
 // { role, sql, database_url, cookie_secret, changed }. Без rotate и с DATABASE_URL этой роли пароль остаётся прежним.
-export function makeSecret(dir, { ref, host, port = 6543, rotate = false } = {}) {
+// Порт 5432: пул в режиме session, обычный Postgres. 6543 (режим transaction) рвёт запросы pg8000, см. lib/db.py.
+export function makeSecret(dir, { ref, host, port = 5432, rotate = false } = {}) {
   if (typeof ref !== 'string' || !REF_RE.test(ref)) throw webError('EARG', 'Укажите --ref: код проекта Supabase, строчные латинские буквы и цифры.');
   if (typeof host !== 'string' || !HOST_RE.test(host)) throw webError('EARG', 'Укажите --host: адрес пула базы, например aws-0-eu-central-1.pooler.supabase.com.');
   const p = Number(port);
-  if (!Number.isInteger(p) || p < 1 || p > 65535) throw webError('EARG', 'Номер после --port: целое число, обычно 6543.');
+  if (!Number.isInteger(p) || p < 1 || p > 65535) throw webError('EARG', 'Номер после --port: целое число, обычно 5432.');
   const role = roleName(dir);
   const env = readEnv(dir);
   let password = null;
@@ -1361,7 +1362,7 @@ export function saveAccount(root, { github, vercelTeam, supabaseOrg, region } = 
 const USAGE = `Сервис для интернета:
   node tools/web.mjs check "<папка проекта>"
   node tools/web.mjs pii "<папка проекта>"
-  node tools/web.mjs secret "<папка проекта>" --ref <код проекта Supabase> --host <адрес пула> [--port 6543] [--rotate]
+  node tools/web.mjs secret "<папка проекта>" --ref <код проекта Supabase> --host <адрес пула> [--port 5432] [--rotate]
   node tools/web.mjs code "<папка проекта>" [--rotate]
   node tools/web.mjs dev "<папка проекта>" [--stop]
   node tools/web.mjs status "<папка проекта>"
@@ -1447,7 +1448,7 @@ async function run(cmd, dirArg, opts, { root, cwd }) {
   if (cmd === 'secret') {
     const gate = needDb(dir, json);
     if (gate) return gate;
-    const r = makeSecret(dir, { ref: opts.ref, host: opts.host, port: opts.port || 6543, rotate: opts.rotate });
+    const r = makeSecret(dir, { ref: opts.ref, host: opts.host, port: opts.port || 5432, rotate: opts.rotate });
     return reply(0, json, r, [
       `Ключ базы записан в .env проекта: роль ${r.role}${r.changed ? ', новый пароль' : ', пароль прежний (новый: --rotate)'}.`,
       'SQL для базы:',
